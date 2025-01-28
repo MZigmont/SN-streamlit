@@ -7,6 +7,7 @@ from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
 import io
+import pandas as pd
 
 # Google Drive API setup
 SCOPES = ['https://www.googleapis.com/auth/drive']
@@ -85,11 +86,17 @@ def main():
 
         if operation == 'View Data':
             st.subheader("Database Contents")
+            query = "SELECT name FROM sqlite_master WHERE type='table';"
+            cursor.execute(query)
+            tables = [row[0] for row in cursor.fetchall()]
+            st.write(tables)
             table_name = st.text_input("Enter table name to view", "")
             if st.button("Load Table"):
                 try:
-                    data = cursor.execute(f"SELECT * FROM {table_name}").fetchall()
-                    st.write(data)
+                    query = f"SELECT * FROM {table_name}"
+                    data = pd.read_sql_query(query, conn) 
+                    # (f"SELECT * FROM {table_name}").fetchall()
+                    st.dataframe(data)
                 except Exception as e:
                     st.error(f"Error: {e}")
 
