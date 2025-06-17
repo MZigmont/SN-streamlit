@@ -10,53 +10,214 @@ from datetime import datetime #from a megapackage, import datetime subpackage
 import time #time is a package
 import sys #system commands
 import pandas as pd
- 
-def ingest_data(df: pd.DataFrame, table_name, conn):
-    df.to_sql(table_name, conn, if_exists='replace', index=False)
+import validation as val
+
+raw_table_name = "raw_bluepay_data" 
+def ingest_data(df: pd.DataFrame, conn):
+    df.to_sql(raw_table_name, conn, if_exists='replace', index=False)
+    cursor = conn.cursor()
+    temp_table_create = """
+    CREATE TEMP TABLE temp_donations AS
+    SELECT *, CAST(NULL as TEXT) AS query_type FROM donations WHERE 1=0;"""
+    cursor.execute(temp_table_create)
+
+    temp_table_create = """
+    CREATE TEMP TABLE temp_donors AS
+    SELECT *,
+        CAST(NULL as TEXT) AS matched_phone, 
+        CAST(NULL as TEXT) AS matched_email, 
+        CAST(NULL as INTEGER) AS prev_max_id 
+    FROM donors WHERE 1=0;"""
+    cursor.execute(temp_table_create)
+
+    temp_table_create = """
+    CREATE TEMP TABLE temp_aliases AS
+    SELECT * FROM aliases WHERE 1=0;"""
+    cursor.execute(temp_table_create)
+
+    # alias match is on phone or email or (first_name and last_name)
+    alias_match = """
+        insert into temp_donations
+        select null ,
+            rbd.id ,
+            max(rbd.issue_date) ,
+            max(a.alias_id_pk) ,
+            1 ,
+            'USD' ,
+            max(case when rbd.trans_type = 'SALE' then rbd.amount else -rbd.amount end),
+            'USD' ,
+            null ,
+            null ,
+            max(case when rbd.trans_type = 'SALE' then rbd.amount else -rbd.amount end),
+            null ,
+            max(case when rbd.trans_type = 'SALE' then rbd.amount else -rbd.amount end) ,
+            'alias match'
+        from raw_bluepay_data rbd
+        left join donations d
+            on rbd.id = d.source_trans_id
+        LEFT JOIN aliases a 
+            ON rbd.phone COLLATE NOCASE = a.alias_phone COLLATE NOCASE
+            OR rbd.email COLLATE NOCASE = a.alias_email COLLATE NOCASE
+            OR (rbd.name1 COLLATE NOCASE = a.alias_first_name COLLATE NOCASE and
+            rbd.name2 COLLATE NOCASE = a.alias_last_name COLLATE NOCASE)
+        where rbd.trans_type in ('SALE', 'VOID', 'REFUND') and
+             rbd.amount > 0 and
+             rbd.status = '1' and
+             d.source_trans_id is NULL and
+             a.alias_id_pk is not NULL
+        GROUP BY rbd.id
+        """
+    
+    new_donors = """
+    insert into temp_donors
+    select NULL ,
+        max(rbd.name1) || ' ' || max(rbd.name2) ,
+        max(rbd.name2) ,
+        max(rbd.name1) ,
+        '' ,
+        NULL ,
+        rbd.phone , 
+        rbd.email,
+        NULL 
+    from raw_bluepay_data rbd
+    left join donations d
+        on rbd.id = d.source_trans_id
+    left join temp_donations td
+        on rbd.id = td.source_trans_id
+    where d.source_trans_id is NULL and 
+        td.source_trans_id is NULL and
+        rbd.trans_type in ('SALE', 'VOID', 'REFUND') and
+        rbd.amount > 0 and
+        rbd.status = '1'
+    group by
+        rbd.email ,
+        rbd.phone """
+    
+    new_prev_max_id_query = """
+    update temp_donors set prev_max_id = (
+        select max(donor_id_pk) from donors)
+    """
+
+    insert_new_donors = """
+    insert into donors
+    select 
+            NULL,
+            donor_reporting_name,
+            donor_last_name,
+            donor_first_name,
+            donor_middle_name,
+            donor_class_year
+    from temp_donors
+    """
+
+    new_aliases_for_new_donors = """
+        insert into temp_aliases
+        select null ,
+            d.donor_id_pk ,
+            rbd.name1 ,
+            rbd.email ,
+            rbd.phone ,
+            rbd.addr1 ,
+            rbd.addr2 ,
+            rbd.city ,
+            rbd.zip ,
+            rbd.country ,
+            '' ,
+            rbd.name2 ,
+            rbd.state
+        from temp_donors td
+        left join raw_bluepay_data rbd
+        on
+            rbd.phone = td.matched_phone and
+            rbd.email = td.matched_email 
+        left join donors d
+        on
+            td.donor_first_name = d.donor_first_name and
+            td.donor_last_name = d.donor_last_name and
+            td.prev_max_id < d.donor_id_pk
+        where
+            rbd.trans_type in ('SALE', 'VOID', 'REFUND') and
+            rbd.amount > 0 and
+            rbd.status = '1'
+        """
+
+    insert_new_aliases = """
+        insert into aliases
+        select *
+        from temp_aliases
+        """
+
+# same as alias_match except we also check against temp_donations
+    donations_for_new_donors = """
+        insert into temp_donations
+        select null ,
+            rbd.id ,
+            max(rbd.issue_date) ,
+            max(a.alias_id_pk) ,
+            1 ,
+            'USD' ,
+            max(case when rbd.trans_type = 'SALE' then rbd.amount else -rbd.amount end),
+            'USD' ,
+            null ,
+            null ,
+            max(case when rbd.trans_type = 'SALE' then rbd.amount else -rbd.amount end),
+            null ,
+            max(case when rbd.trans_type = 'SALE' then rbd.amount else -rbd.amount end) ,
+            'new donors'
+        from raw_bluepay_data rbd
+        left join donations d
+            on rbd.id = d.source_trans_id
+        LEFT JOIN aliases a 
+            ON rbd.phone COLLATE NOCASE = a.alias_phone COLLATE NOCASE
+            OR rbd.email COLLATE NOCASE = a.alias_email COLLATE NOCASE
+            OR (rbd.name1 COLLATE NOCASE = a.alias_first_name COLLATE NOCASE and
+            rbd.name2 COLLATE NOCASE = a.alias_last_name COLLATE NOCASE)
+        LEFT JOIN temp_donations td
+            ON rbd.id = td.source_trans_id
+        where rbd.trans_type in ('SALE', 'VOID', 'REFUND') and
+             rbd.amount > 0 and
+             rbd.status = '1' and
+             d.source_trans_id is NULL and
+             a.alias_id_pk is not NULL and
+             td.source_trans_id is NULL
+        GROUP BY rbd.id
+        """
+
+# when instr(rbd.name1 ,' ') = 0
+#         then lower(rbd.name1)
+#         else
+#             lower(substr(rbd.name1 ,1,instr(rbd.name1 ,' ')-1))
+#         end ,
+#     lower(rbd.name2)
+    
+    cursor.execute(alias_match)
+    cursor.execute(new_donors)
+    cursor.execute(new_prev_max_id_query)
+    cursor.execute(insert_new_donors)
+    cursor.execute(new_aliases_for_new_donors)
+    cursor.execute(insert_new_aliases)
+    cursor.execute(donations_for_new_donors)
+
+    data_donors = pd.read_sql_query("SELECT * FROM temp_donors", conn)
+    data_aliases = pd.read_sql_query("SELECT * FROM temp_aliases", conn)
+    data_donations = pd.read_sql_query("SELECT * FROM temp_donations", conn)
+
+    validation_dict = val.validate(conn, "raw_bluepay_data" , "id")
+
+    return {'temp_donations':data_donations, 
+            'temp_donors':data_donors, 
+            'temp_aliases':data_aliases,
+            'validation_dict':validation_dict}
 
 def dummy():
-    def question_marks(length):
-        results='('+'?,'*length
-        results=results[:-1]+')'
-        return results
+    # TO DO: 3/10/25:
+    # get txns not captured by 1
+    # create new donors for each txn
+    # create new alias for each donor
+    # ingest via 1 
+    # 
+    # production order 1,3,4,1
 
-    file = input("""Please enter the EXACT filename of the Bluepay data you'd like to ingest.\n
-    You can copy and paste the filename from the above drive mounting code:\n""")
-
-    #open the file and then convert it to a list of lists (rows and data elements)
-    # 2020-08-26 IMPLEMENT FILE SELECTION PROCESS FOR USER
-    csvfile = open(file, 'r', newline='')
-
-    csvreader = csv.reader(csvfile, delimiter=',')
-
-    conn=sqlite3.connect('sigma_nu_donations.db')
-    c=conn.cursor()
-
-    c.execute("delete from raw_bluepay_data")
-
-    print('Ingestion beginning for BluePay data')
-    # this code REQUIRES a header row in the raw data
-    next(csvreader)
-    row_number=0
-
-    for row in csvreader:
-        if len(row)>0:
-            #these are the column numbers of the fields we want
-            #0    2    3    11    15    21    22    23    24    25    26    27    29    30    31    32    48    49    50    51    57    58    59    60    70
-            #c.execute("INSERT INTO TABLE_NAME VALUES (?, ?, ?)", (value1, value2, value3))
-            columns=[0,2,3,11,15,21,22,23,24,25,26,27,29,30,31,32,48,49,50,51,57,58,59,60,70]
-
-            #this would have padded the string to 5 char with leading zeros row[25]=row[25].rjust(5,'0')
-
-            row[26]=row[26].replace('-','') #remove dashes from all phone numbers
-
-            c.execute("INSERT INTO raw_bluepay_data VALUES "+question_marks(len(columns)), tuple((row[i] for i in columns)))
-            row_number = row_number +1
-
-    print('{:,} records ingested.'.format(row_number))
-
-    # data processing starts here
-    # -- production order 1,2,1,3,4,1
 
     # 1
     exact_match = """
