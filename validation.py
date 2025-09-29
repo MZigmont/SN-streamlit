@@ -40,17 +40,24 @@ def validate(conn, raw_data_tablename:str, trans_id_fieldname:str):
     rows = cursor.fetchall()  # Fetch all results
     no_dupes_rowcount_raw = len(rows)  # Count the number of rows
 
-    all_trans_accounted = f"""
+    # TO DO: 9/8/2025 - FIX THE BELOW and continue ingesting real data from Bluepay
+    # this query checks for transactions in the raw data that should have made it into the temp_donations table
+    # but did not.  query returns rows in raw data that are unaccounted for
+    all_unaccounted_trans = f"""
         SELECT rbd.*
         FROM {raw_data_tablename} as rbd
         LEFT JOIN temp_donations td
             ON
             td.source_trans_id = rbd.id
-                where rbd.trans_type in ('SALE', 'VOID', 'REFUND') and
+        LEFT JOIN donations d
+            ON
+            rbd.id = d.source_trans_id
+        where rbd.trans_type in ('SALE', 'VOID', 'REFUND') and
             rbd.amount > 0 and
             rbd.status = '1' and
-            td.source_trans_id is NULL"""
-    unaccounted_trans_df = pd.read_sql_query(all_trans_accounted, conn)
+            td.source_trans_id is NULL and
+            d.source_trans_id is NULL"""
+    unaccounted_trans_df = pd.read_sql_query(all_unaccounted_trans, conn)
 
     no_dupes_donations_df = pd.read_sql_query(no_dupes_donations, conn)
 
@@ -77,8 +84,9 @@ def validate(conn, raw_data_tablename:str, trans_id_fieldname:str):
         HAVING COUNT(*) > 1"""
     no_dupes_temp_aliases_df = pd.read_sql_query(no_dupes_temp_aliases, conn)
 
+# this looks for rows in alias table where every non-primary key field is the same
     no_dupes_aliases = """
-        SELECT alias_first_name, alias_email, alias_phone, alias_address_1, alias_address_2, alias_city, 
+        SELECT GROUP_CONCAT(alias_id_pk) AS duplicate_ids, alias_first_name, alias_email, alias_phone, alias_address_1, alias_address_2, alias_city, 
             alias_zip, alias_country, alias_middle_name, alias_last_name, alias_state, COUNT(*)
         FROM aliases
         GROUP BY alias_first_name, alias_email, alias_phone, alias_address_1, alias_address_2, alias_city, 
@@ -95,4 +103,3 @@ def validate(conn, raw_data_tablename:str, trans_id_fieldname:str):
             "no_dupes_temp_aliases_df":no_dupes_temp_aliases_df ,
             "no_dupes_aliases_df":no_dupes_aliases_df}
  
-

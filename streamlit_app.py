@@ -11,6 +11,11 @@ import pandas as pd
 import bluepay_ingestion as bi
 import validation_display as vd
 import error_correction as ec
+import reports
+from datetime import datetime
+from datetime import date
+import backups
+import update_db as udb
 
 # Google Drive API setup
 SCOPES = ['https://www.googleapis.com/auth/drive']
@@ -54,8 +59,16 @@ def upload_db_file(service, file_id, local_file):
     except Exception as e:
         st.error(f"Error uploading file: {e}")
 
+# Define what happens when the button is clicked
+def on_click():
+    st.session_state["button_enabled"] = False
+
 # Streamlit App
 def main():
+    # Initialize session state key
+    if "button_enabled" not in st.session_state:
+        st.session_state["button_enabled"] = True
+    
     st.title("SQLite Database Editor with Google Drive Sync")
 
     # Google Drive Authentication
@@ -80,7 +93,7 @@ def main():
 
         # UI Options
         st.sidebar.header("Database Operations")
-        operation = st.sidebar.radio("Choose an Operation", ['View Data', 'Insert Data', 'Update Data', 'Upload CSV', "FIX DATABASE"])
+        operation = st.sidebar.radio("Choose an Operation", ['View Data', 'Upload CSV', "FIX DATABASE", "Download/Upload Tables", "Run Reports", "Manage Backups"])
 
         if operation == 'View Data':
             st.subheader("Database Contents")
@@ -94,36 +107,6 @@ def main():
                     query = f"SELECT * FROM {table_name}"
                     data = pd.read_sql_query(query, conn)
                     st.dataframe(data)
-                except Exception as e:
-                    st.error(f"Error: {e}")
-
-        elif operation == 'Insert Data':
-            st.subheader("Insert New Data")
-            table_name = st.text_input("Table Name", "")
-            columns = st.text_input("Columns (comma-separated)", "")
-            values = st.text_input("Values (comma-separated)", "")
-            if st.button("Insert"):
-                try:
-                    query = f"INSERT INTO {table_name} ({columns}) VALUES ({values})"
-                    cursor.execute(query)
-                    conn.commit()
-                    st.success("Data inserted successfully!")
-                except Exception as e:
-                    st.error(f"Error: {e}")
-
-        elif operation == 'Update Data':
-            st.subheader("Update Data")
-            table_name = st.text_input("Table Name", "")
-            set_clause = st.text_input("SET clause (e.g., column1 = 'value')", "")
-            condition = st.text_input("WHERE clause (optional)", "")
-            if st.button("Update"):
-                try:
-                    query = f"UPDATE {table_name} SET {set_clause}"
-                    if condition:
-                        query += f" WHERE {condition}"
-                    cursor.execute(query)
-                    conn.commit()
-                    st.success("Data updated successfully!")
                 except Exception as e:
                     st.error(f"Error: {e}")
 
@@ -150,12 +133,15 @@ def main():
                     st.dataframe(staged_aliases)
 
                     vd.display(validation_dict)
-                    
-                    # Insert data into a table
-                    # table_name = st.text_input("Enter table name to insert data into", "")
-                    # if st.button("Insert CSV Data into Table"):
-                    #     df.to_sql(table_name, conn, if_exists='append', index=False)
-                    #     st.success(f"Data successfully inserted into {table_name}")
+                    st.text("How do you want to proceed?")
+                    if st.button("Commit the data to database?"):
+                        conn.commit()
+                        st.success("Data committed to the database!")
+
+                    if st.button("Cancel"):
+                        conn.rollback()
+                        st.success("Database rolled back to prior state!")
+
                 except Exception as e:
                     st.error(f"Error processing the CSV file: {e}")
         elif operation == 'FIX DATABASE':
@@ -170,7 +156,7 @@ def main():
             else:
                 st.write("## Data Table")
                 st.dataframe(df)
-                
+
                 # Use index as values and format_func to show readable labels
                 selected_index = st.selectbox(
                     "Select a row:",
@@ -198,8 +184,205 @@ def main():
                     ec.keep_donation(conn, selected_trans_id, selected_label)
                     conn.commit()
                     st.success("Row kept and others deleted!")
+                
+        elif operation == "Download/Upload Tables":
+            st.subheader("Select Table you want to download as .csv")
+            query = "SELECT name FROM sqlite_master WHERE type='table';"
+            cursor.execute(query)
+            tables = [row[0] for row in cursor.fetchall() if "backup_" not in row[0]]
+            
+            selected_backup = st.selectbox(
+                    "Select a Table:",
+                    options=tables,  # Values passed through
+                    )
+            query = f"""
+                SELECT *
+                FROM {selected_backup}
+                """
+            output_df = pd.read_sql_query(query, conn)
 
-# TO DO: 6/9/2025 - make sure no error shows when there are no duplicate transactions
+            csv = output_df.to_csv(index=False)
+
+            st.download_button(
+                label="Download CSV",
+                data=csv,
+                file_name=f"{selected_backup}.csv",
+                mime="text/csv"
+                )
+
+            st.dataframe(output_df)
+
+            st.write("Upload the .csv file to replace a Table")
+            st.subheader("Upload .csv")
+            uploaded_file = st.file_uploader("Choose a .csv file", type=['csv'])
+            
+            if uploaded_file is not None:
+                # Read CSV into DataFrame
+                df = pd.read_csv(uploaded_file, dtype={"zip": str}, keep_default_na=True, na_values=[''])
+                st.subheader("This is what you uploaded")
+                st.dataframe(df)
+                st.subheader("Please select the table to OVERWRITE with your uploaded data")
+                overwriting_table = st.selectbox(
+                    label="Select the table to OVERWRITE:",
+                    options=tables,
+                    )
+                
+
+                
+                if st.button(f"Confirm that you want to overwrite selected table {overwriting_table}",
+                            on_click=on_click,
+                            disabled=not st.session_state["button_enabled"]
+                ):
+                    # call the create_backup() function here
+                    backups.create_backup(overwriting_table, conn)
+                    st.success("Backup created.")
+                    
+                    # Execute PRAGMA and read into DataFrame
+                    existing_table_df = pd.read_sql_query(f"PRAGMA table_info({overwriting_table});", conn)
+                    st.dataframe(existing_table_df)
+                    st.write(df.dtypes)
+
+                    # Check if number of fieldnames/columns matches
+                    if len(existing_table_df["name"]) != len(df.columns):
+                        st.error(f"Uploaded table has {len(df.columns)} columns.  \n"
+                                 f"Existing table {overwriting_table} has {len(existing_table_df["name"])} fields.  \n"
+                                 f"{overwriting_table} was NOT overwritten.")
+                    # Compare uploaded fieldnames with existing fieldnames
+                    elif (existing_table_df["name"] == df.columns).all():
+                        # fieldnames match, go ahead and overwrite
+                        st.write("Fieldnames match!")
+                        df.to_sql("temp_table_csv_direct_edit", conn, if_exists='replace', index=False)
+                        table_overwrite_sql_code = f"""
+                        -- Disable foreign key checks
+                        PRAGMA foreign_keys = OFF;
+
+                        DELETE FROM {overwriting_table};
+                        INSERT INTO {overwriting_table} 
+                        SELECT * FROM temp_table_csv_direct_edit;
+
+                        -- Re-enable foreign key checks
+                        PRAGMA foreign_keys = ON;
+
+                        DROP TABLE temp_table_csv_direct_edit;
+                        """
+                        # this command automatically commits a transaction
+                        cursor.executescript(table_overwrite_sql_code)
+                    else:
+                        st.error("Fieldnames of uploaded table do not match selected table.  \n"
+                                 f"{overwriting_table} was NOT overwritten.")
+        elif operation == "Run Reports":
+            default_startdate = date(date.today().year,1,1)
+            default_enddate = date.today()
+            # Date range selector
+            start_date, end_date = st.date_input(
+                "Select a date range",
+
+                value=(default_startdate, default_enddate)    
+            )
+            st.write(f"Start: {start_date}, End: {end_date}")
+            
+            if st.button(f"Run Reports for period {start_date} to {end_date}"):
+                # Run reports here
+                output , wb_name = reports.run_all_reports(start_date.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d"), conn)
+                # Provide download button for the user
+                st.download_button(
+                    label="Download Excel file",
+                    data=output,
+                    file_name=wb_name,
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+        elif operation == "Manage Backups":
+            # Use index as values and format_func to show readable labels
+            selected_index = st.selectbox(
+                "Select a row:",
+                options=["Create a backup", "Delete a backup", "Restore from a backup"]
+            )
+            if selected_index == "Create a backup":
+                st.subheader("Select Table you want to backup")
+                query = "SELECT name FROM sqlite_master WHERE type='table';"
+                cursor.execute(query)
+                tables = [row[0] for row in cursor.fetchall() if "backup_" not in row[0]]
+                
+                selected_backup = st.selectbox(
+                        "Select a Table:",
+                        options=tables,  # Values passed through
+                        )
+                st.subheader(f"You selected {selected_backup} to create a backup table.")
+                
+                if st.button(f"YES, make a backup of {selected_backup}"):
+                    backup_tablename = backups.create_backup(selected_backup, conn)
+                    st.success(f"Backup created, {backup_tablename}")
+                
+            elif selected_index == "Delete a backup":
+                # delete a table here
+                st.subheader("Select BACKUP Table you want to delete")
+                query = "SELECT name FROM sqlite_master WHERE type='table';"
+                cursor.execute(query)
+                tables = [row[0] for row in cursor.fetchall() if "backup_" in row[0]]
+                
+                selected_backup = st.selectbox(
+                        "Select a Table:",
+                        options=tables,  # Values passed through
+                        )
+                st.subheader(f"You selected {selected_backup} to delete.")
+                if st.button(f"YES, delete {selected_backup}"):
+                    backups.delete_backup(selected_backup, conn)
+                    st.success(f"You just deleted {selected_backup}")
+
+                pass
+            elif selected_index == "Restore from a backup":
+                # restore a table here
+                st.subheader("Select BACKUP Table you want to restore")
+                query = "SELECT name FROM sqlite_master WHERE type='table';"
+                cursor.execute(query)
+                tables = [row[0] for row in cursor.fetchall() if "backup_" in row[0]]
+                
+                selected_backup = st.selectbox(
+                        "Select a Table:",
+                        options=tables,  # Values passed through
+                        )
+                parts = selected_backup.split("_")
+
+                # everything between the first and the second-to-last
+                target_table = "_".join(parts[1:-2])
+                st.subheader(f"You've selected {selected_backup} to overwrite {target_table}")
+                
+                # Execute PRAGMA and read into DataFrame
+                selected_backup_df = pd.read_sql_query(f"PRAGMA table_info({selected_backup});", conn)
+                st.subheader(f"{selected_backup}")
+                st.dataframe(selected_backup_df)
+
+                target_table_df = pd.read_sql_query(f"PRAGMA table_info({target_table});", conn)
+                st.subheader(f"{target_table}")
+                st.dataframe(target_table_df)
+
+                # Check if number of fieldnames/columns matches
+                if len(selected_backup_df) != len(target_table_df):
+                    st.error(f"Backup table {selected_backup} has {len(selected_backup_df)} columns.  \n"
+                                f"Target table {target_table} has {len(target_table_df)} fields.  \n"
+                                f"{target_table} was NOT overwritten.")
+                # Compare fieldnames of two tables
+                elif (target_table_df["name"] == selected_backup_df["name"]).all():
+                    # fieldnames match, go ahead and overwrite
+                    st.write("Fieldnames match!")
+                    if st.button(f"YES, overwrite {target_table} with data from {selected_backup}"):
+                        backups.restore_backup(target_table, selected_backup, conn)
+                        st.success(f"{target_table} was overwritten by {selected_backup}")
+                else:
+                    st.error("Fieldnames of tables do not match.  \n"
+                                f"{overwriting_table} was NOT overwritten.")
+
+# some legit source_trans_id are text!  HOW TO HANDLE??
+
+
+# TO DO: 8/6/2025 - error thrown when user chooses first data in "Run Reports"
+# TO DO: 8/11/2025 - update data from Bluepay and Paypal and then run code
+# TO DO: 8/11/2025 - Show error message to user when they select a date range that contains no records
+# TO DO: LATER - get email functionality to work
+# TO DO: 7/21/2025 - build out reports
+# TO DO: 7/21/2025 - figure out emailing
+
+
 
 # TO DO: 5/12/2025 - make UI to help user resolve validation errors, start with duplicate source trans ids in donations
 

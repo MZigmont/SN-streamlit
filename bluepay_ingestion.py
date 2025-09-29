@@ -11,6 +11,7 @@ import time #time is a package
 import sys #system commands
 import pandas as pd
 import validation as val
+import update_db as udb
 
 raw_table_name = "raw_bluepay_data" 
 def ingest_data(df: pd.DataFrame, conn):
@@ -141,11 +142,6 @@ def ingest_data(df: pd.DataFrame, conn):
             rbd.status = '1'
         """
 
-    insert_new_aliases = """
-        insert into aliases
-        select *
-        from temp_aliases
-        """
 
 # same as alias_match except we also check against temp_donations
     donations_for_new_donors = """
@@ -195,8 +191,12 @@ def ingest_data(df: pd.DataFrame, conn):
     cursor.execute(new_prev_max_id_query)
     cursor.execute(insert_new_donors)
     cursor.execute(new_aliases_for_new_donors)
-    cursor.execute(insert_new_aliases)
+    udb.push_temp_table_to_live("temp_aliases", "aliases", ["*"], conn)
     cursor.execute(donations_for_new_donors)
+    udb.push_temp_table_to_live("temp_donations", "donations", 
+                                ["my_trans_id_pk", "source_trans_id", "date_time", "alias_id_fk", "trans_source_id_fk", "donation_currrency",
+                                 "donation_gross_amt", "fee_currency", "fee_amt", "conversion_rate", "donation_gross_USD", "fee_USD", "donation_net_USD"],
+                                 conn)
 
     data_donors = pd.read_sql_query("SELECT * FROM temp_donors", conn)
     data_aliases = pd.read_sql_query("SELECT * FROM temp_aliases", conn)
