@@ -17,24 +17,7 @@ raw_table_name = "raw_bluepay_data"
 def ingest_data(df: pd.DataFrame, conn):
     df.to_sql(raw_table_name, conn, if_exists='replace', index=False)
     cursor = conn.cursor()
-    temp_table_create = """
-    CREATE TEMP TABLE temp_donations AS
-    SELECT *, CAST(NULL as TEXT) AS query_type FROM donations WHERE 1=0;"""
-    cursor.execute(temp_table_create)
-
-    temp_table_create = """
-    CREATE TEMP TABLE temp_donors AS
-    SELECT *,
-        CAST(NULL as TEXT) AS matched_phone, 
-        CAST(NULL as TEXT) AS matched_email, 
-        CAST(NULL as INTEGER) AS prev_max_id 
-    FROM donors WHERE 1=0;"""
-    cursor.execute(temp_table_create)
-
-    temp_table_create = """
-    CREATE TEMP TABLE temp_aliases AS
-    SELECT * FROM aliases WHERE 1=0;"""
-    cursor.execute(temp_table_create)
+    udb.create_staging_tables(cursor)
 
     # alias match is on phone or email or (first_name and last_name)
     alias_match = """
@@ -56,16 +39,20 @@ def ingest_data(df: pd.DataFrame, conn):
         from raw_bluepay_data rbd
         left join donations d
             on rbd.id = d.source_trans_id
+            and d.trans_source_id_fk = 1
         LEFT JOIN aliases a 
             ON rbd.phone COLLATE NOCASE = a.alias_phone COLLATE NOCASE
             OR rbd.email COLLATE NOCASE = a.alias_email COLLATE NOCASE
             OR (rbd.name1 COLLATE NOCASE = a.alias_first_name COLLATE NOCASE and
             rbd.name2 COLLATE NOCASE = a.alias_last_name COLLATE NOCASE)
+        LEFT JOIN temp_donations td
+            ON rbd.id = td.source_trans_id
         where rbd.trans_type in ('SALE', 'VOID', 'REFUND') and
              rbd.amount > 0 and
              rbd.status = '1' and
              d.source_trans_id is NULL and
-             a.alias_id_pk is not NULL
+             a.alias_id_pk is not NULL and
+             td.source_trans_id is NULL
         GROUP BY rbd.id
         """
     
@@ -83,6 +70,7 @@ def ingest_data(df: pd.DataFrame, conn):
     from raw_bluepay_data rbd
     left join donations d
         on rbd.id = d.source_trans_id
+        and d.trans_source_id_fk = 1
     left join temp_donations td
         on rbd.id = td.source_trans_id
     where d.source_trans_id is NULL and 
@@ -97,18 +85,6 @@ def ingest_data(df: pd.DataFrame, conn):
     new_prev_max_id_query = """
     update temp_donors set prev_max_id = (
         select max(donor_id_pk) from donors)
-    """
-
-    insert_new_donors = """
-    insert into donors
-    select 
-            NULL,
-            donor_reporting_name,
-            donor_last_name,
-            donor_first_name,
-            donor_middle_name,
-            donor_class_year
-    from temp_donors
     """
 
     new_aliases_for_new_donors = """
@@ -142,43 +118,6 @@ def ingest_data(df: pd.DataFrame, conn):
             rbd.status = '1'
         """
 
-
-# same as alias_match except we also check against temp_donations
-    donations_for_new_donors = """
-        insert into temp_donations
-        select null ,
-            rbd.id ,
-            max(rbd.issue_date) ,
-            max(a.alias_id_pk) ,
-            1 ,
-            'USD' ,
-            max(case when rbd.trans_type = 'SALE' then rbd.amount else -rbd.amount end),
-            'USD' ,
-            null ,
-            null ,
-            max(case when rbd.trans_type = 'SALE' then rbd.amount else -rbd.amount end),
-            null ,
-            max(case when rbd.trans_type = 'SALE' then rbd.amount else -rbd.amount end) ,
-            'new donors'
-        from raw_bluepay_data rbd
-        left join donations d
-            on rbd.id = d.source_trans_id
-        LEFT JOIN aliases a 
-            ON rbd.phone COLLATE NOCASE = a.alias_phone COLLATE NOCASE
-            OR rbd.email COLLATE NOCASE = a.alias_email COLLATE NOCASE
-            OR (rbd.name1 COLLATE NOCASE = a.alias_first_name COLLATE NOCASE and
-            rbd.name2 COLLATE NOCASE = a.alias_last_name COLLATE NOCASE)
-        LEFT JOIN temp_donations td
-            ON rbd.id = td.source_trans_id
-        where rbd.trans_type in ('SALE', 'VOID', 'REFUND') and
-             rbd.amount > 0 and
-             rbd.status = '1' and
-             d.source_trans_id is NULL and
-             a.alias_id_pk is not NULL and
-             td.source_trans_id is NULL
-        GROUP BY rbd.id
-        """
-
 # when instr(rbd.name1 ,' ') = 0
 #         then lower(rbd.name1)
 #         else
@@ -189,10 +128,16 @@ def ingest_data(df: pd.DataFrame, conn):
     cursor.execute(alias_match)
     cursor.execute(new_donors)
     cursor.execute(new_prev_max_id_query)
-    cursor.execute(insert_new_donors)
+    udb.push_temp_table_to_live("temp_donors", "donors", [
+            "NULL",
+            "donor_reporting_name",
+            "donor_last_name",
+            "donor_first_name",
+            "donor_middle_name",
+            "donor_class_year"], conn)
     cursor.execute(new_aliases_for_new_donors)
     udb.push_temp_table_to_live("temp_aliases", "aliases", ["*"], conn)
-    cursor.execute(donations_for_new_donors)
+    cursor.execute(alias_match)
     udb.push_temp_table_to_live("temp_donations", "donations", 
                                 ["my_trans_id_pk", "source_trans_id", "date_time", "alias_id_fk", "trans_source_id_fk", "donation_currrency",
                                  "donation_gross_amt", "fee_currency", "fee_amt", "conversion_rate", "donation_gross_USD", "fee_USD", "donation_net_USD"],
@@ -202,7 +147,7 @@ def ingest_data(df: pd.DataFrame, conn):
     data_aliases = pd.read_sql_query("SELECT * FROM temp_aliases", conn)
     data_donations = pd.read_sql_query("SELECT * FROM temp_donations", conn)
 
-    validation_dict = val.validate(conn, "raw_bluepay_data" , "id")
+    validation_dict = val.validate_bluepay(conn, "raw_bluepay_data" , "id")
 
     return {'temp_donations':data_donations, 
             'temp_donors':data_donors, 

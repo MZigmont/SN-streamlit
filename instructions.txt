@@ -1,0 +1,42 @@
+INSTRUCTIONS FOR USE
+
+Run "Install packages (ALWAYS DO FIRST)
+Code will force a restart of the session. This is by design. Just let it run to completion (approx 2-3 minutes). When circle around play button stops spinning.
+Download data from BluePay (rebranded as Clover) and PayPal and save to drive (IF NEED NEW DATA)
+BluePay URL as of 8/12/2021 https://secure.bluepay.com/
+Go To Virtual Terminal
+Transaction Search
+a. from date should be equal to or just before date of last download (overlapping transaction data is fine, a hole in the transaction history is not)
+b. Sort by Date
+c. Download CSV file w/ Column Headers (HAVING COLUMN HEADERS IS IMPORTANT)
+Copy file into Donations Folder https://docs.google.com/spreadsheets/d/1Aa917D1UsITurF31nPg1vK_XK8RqzMhWara7sCLGsFo/edit?usp=sharing
+PayPal URL as of 8/12/2021 https://www.paypal.com/us/signin
+a. Activity -> All Reports -> Activity Download
+b. Balance Affecting transactions
+c. from date should be equal to or just before date of last download (overlapping transaction data is fine, a hole in the transaction history is not)
+d. CSV format
+e. Copy file into Donations Folder https://docs.google.com/spreadsheets/d/1Aa917D1UsITurF31nPg1vK_XK8RqzMhWara7sCLGsFo/edit?usp=sharing
+Mount drive and import function library (ALWAYS DO)
+Run BluePay ingestion code and supply exact filenames of downloaded data
+a. Exact Match means existing alias matches donor record exactly
+b. Partial Alias Match means existing alias partially matches donor record and code creates/adds a new alias for the donor from the new data
+c. New Donors Match means donor info from new data has no prior alias in our database and we create a brand new donor record and alias list for that donor
+Run PayPal ingestion code and supply exact filenames of downloaded data
+a. Exact Match means existing alias matches donor record exactly
+b. Partial Alias Match means existing alias partially matches donor record and code creates/adds a new alias for the donor from the new data
+c. New Donors Match means donor info from new data has no prior alias in our database and we create a brand new donor record and alias list for that donor
+OTHER / MANUAL Donations - enter any manual donations if necessary
+REPORTS MAIN
+a. run reports with date range of interest
+b. various outputs are displayed
+c. Excel spreadsheeet is created in Donations\ with filename sig_nu_yyyy-mm-dd_yyyy_mm_dd.xlsx
+d. use spreadsheet however you like e. if data is missing or needs to be edited....do following
+DONOR INFORMATION FROM USER
+enter class year, email address, alias, etc.
+UPDATE DONOR EMAILS MANUALLY
+Email out to donors
+Due to Google security updates, you CANNOT run this on Google CoLab. You must download the entire donations folder and run this code on a local machine.
+Download/sync Donations folder to some location on local machine
+Lauch VS Code and open the local folder
+Open "SN_donations_db_code.ipynb"
+TO DO interactive mode is not working on VS code for some reason, FIX

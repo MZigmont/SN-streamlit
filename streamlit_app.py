@@ -9,6 +9,7 @@ from google.auth.transport.requests import Request
 import io
 import pandas as pd
 import bluepay_ingestion as bi
+import paypal_ingestion as pi
 import validation_display as vd
 import error_correction as ec
 import reports
@@ -111,15 +112,23 @@ def main():
                     st.error(f"Error: {e}")
 
         elif operation == 'Upload CSV':
+            st.dataframe(udb.get_latest_transaction(conn))
+            payment_processor = st.radio("What source is the file?", ["Bluepay / Clover" , "Paypal"])
             st.subheader("Upload CSV File")
             uploaded_file = st.file_uploader("Choose a CSV file", type=['csv'])
             if uploaded_file is not None:
                 try:
                     # Read CSV into DataFrame
-                    df = pd.read_csv(uploaded_file, dtype={"zip": str}, keep_default_na=False)
+                    df = pd.read_csv(uploaded_file, dtype={"zip": str , "Zip/Postal Code": str, "phone": str, "Contact Phone Number": str}, keep_default_na=False)
                     st.text("raw_data")
                     st.dataframe(df)
-                    results_dict = bi.ingest_data(df, conn)
+                    if payment_processor == "Bluepay / Clover":
+                        results_dict = bi.ingest_data(df, conn)
+                    elif payment_processor == "Paypal":
+                        results_dict = pi.ingest_data(df, conn)
+                    else:
+                        st.error(f"Unexpected radio button value {payment_processor}")
+                        raise NotImplementedError("Unexpected radio button value")
                     staged_data = results_dict['temp_donations']
                     staged_donors = results_dict['temp_donors']
                     staged_aliases = results_dict['temp_aliases']

@@ -9,18 +9,10 @@
 
 import pandas as pd
 
-no_dupes_donations = """
-        SELECT source_trans_id, source_name, COUNT(*)
-        FROM donations
-        LEFT JOIN trans_source
-        ON
-            donations.trans_source_id_fk = trans_source.source_id_pk
-        WHERE
-            trans_source.source_id_pk <> 3
-        GROUP BY source_trans_id, trans_source_id_fk
-        HAVING COUNT(*) > 1"""
-
-def validate(conn, raw_data_tablename:str, trans_id_fieldname:str):
+# validating tables regardless of bluepay/paypal source
+def validate_agnostic(conn, raw_data_tablename:str, trans_id_fieldname:str):
+    
+    # making sure no duplicates in temp_donations table, bluepay/paypal agnostic
     no_dupes_trans_id = """
         SELECT source_trans_id, COUNT(*) AS count
         FROM temp_donations
@@ -31,6 +23,7 @@ def validate(conn, raw_data_tablename:str, trans_id_fieldname:str):
     rows = cursor.fetchall()  # Fetch all results
     no_dupes_rowcount = len(rows)  # Count the number of rows
 
+    # looking for dupes in the raw data passed into the validation function, bluepay/paypal agnostic
     no_dupes_raw_data = f"""
         SELECT {trans_id_fieldname}, COUNT(*) AS count
         FROM {raw_data_tablename}
@@ -40,9 +33,70 @@ def validate(conn, raw_data_tablename:str, trans_id_fieldname:str):
     rows = cursor.fetchall()  # Fetch all results
     no_dupes_rowcount_raw = len(rows)  # Count the number of rows
 
-    # TO DO: 9/8/2025 - FIX THE BELOW and continue ingesting real data from Bluepay
+    # checking for dupes in official donations table, bluepay/paypal agnostic
+    no_dupes_donations = """
+        SELECT source_trans_id, source_name, COUNT(*)
+        FROM donations
+        LEFT JOIN trans_source
+        ON
+            donations.trans_source_id_fk = trans_source.source_id_pk
+        WHERE
+            trans_source.source_id_pk <> 3
+        GROUP BY source_trans_id, trans_source_id_fk
+        HAVING COUNT(*) > 1"""
+    no_dupes_donations_df = pd.read_sql_query(no_dupes_donations, conn)
+
+    # checking for dupes in temp donors table, bluepay/paypal agnostic
+    no_dupes_temp_donors = """
+        SELECT donor_last_name, donor_first_name, COUNT(*)
+        FROM temp_donors
+        GROUP BY donor_last_name, donor_first_name
+        HAVING COUNT(*) > 1"""
+    no_dupes_temp_donors_df = pd.read_sql_query(no_dupes_temp_donors, conn)
+
+    # checking for dupes in official donors table, bluepay/paypal agnostic
+    no_dupes_donors = """
+        SELECT donor_reporting_name, donor_class_year, COUNT(*)
+        FROM donors
+        GROUP BY donor_reporting_name, donor_class_year
+        HAVING COUNT(*) > 1"""
+    no_dupes_donors_df = pd.read_sql_query(no_dupes_donors, conn)
+
+    # checking for dupes in temp_aliases, bluepay/paypal agnostic
+    no_dupes_temp_aliases = """
+        SELECT GROUP_CONCAT(alias_id_pk) AS duplicate_ids, alias_first_name, alias_email, alias_phone, alias_address_1, alias_address_2, alias_city, 
+            alias_zip, alias_country, alias_middle_name, alias_last_name, alias_state, COUNT(*)
+        FROM temp_aliases
+        GROUP BY alias_first_name, alias_email, alias_phone, alias_address_1, alias_address_2, alias_city, 
+            alias_zip, alias_country, alias_middle_name, alias_last_name, alias_state
+        HAVING COUNT(*) > 1"""
+    no_dupes_temp_aliases_df = pd.read_sql_query(no_dupes_temp_aliases, conn)
+
+    # this looks for rows in alias table where every non-primary key field is the same, bluepay/paypal agnostic
+    no_dupes_aliases = """
+        SELECT GROUP_CONCAT(alias_id_pk) AS duplicate_ids, alias_first_name, alias_email, alias_phone, alias_address_1, alias_address_2, alias_city, 
+            alias_zip, alias_country, alias_middle_name, alias_last_name, alias_state, COUNT(*)
+        FROM aliases
+        GROUP BY alias_first_name, alias_email, alias_phone, alias_address_1, alias_address_2, alias_city, 
+            alias_zip, alias_country, alias_middle_name, alias_last_name, alias_state
+        HAVING COUNT(*) > 1"""
+    no_dupes_aliases_df = pd.read_sql_query(no_dupes_aliases, conn)
+
+    return {"no_dupes_rowcount":no_dupes_rowcount , 
+            "no_dupes_rowcount_raw":no_dupes_rowcount_raw , 
+            #"unaccounted_trans_df":unaccounted_trans_df ,
+            "no_dupes_donations_df":no_dupes_donations_df ,
+            "no_dupes_temp_donors_df":no_dupes_temp_donors_df ,
+            "no_dupes_donors_df":no_dupes_donors_df ,
+            "no_dupes_temp_aliases_df":no_dupes_temp_aliases_df ,
+            "no_dupes_aliases_df":no_dupes_aliases_df}
+ 
+def validate_bluepay(conn, raw_data_tablename:str, trans_id_fieldname:str):
     # this query checks for transactions in the raw data that should have made it into the temp_donations table
-    # but did not.  query returns rows in raw data that are unaccounted for
+    # but did not.  query returns rows in raw data that are unaccounted for, bluepay specific code
+
+    validation_dict = validate_agnostic(conn, raw_data_tablename, trans_id_fieldname)
+
     all_unaccounted_trans = f"""
         SELECT rbd.*
         FROM {raw_data_tablename} as rbd
@@ -58,48 +112,29 @@ def validate(conn, raw_data_tablename:str, trans_id_fieldname:str):
             td.source_trans_id is NULL and
             d.source_trans_id is NULL"""
     unaccounted_trans_df = pd.read_sql_query(all_unaccounted_trans, conn)
+    validation_dict["unaccounted_trans_df"]=unaccounted_trans_df
+    return validation_dict
 
-    no_dupes_donations_df = pd.read_sql_query(no_dupes_donations, conn)
+def validate_paypal(conn, raw_data_tablename:str, trans_id_fieldname:str):
+    # this query checks for transactions in the raw data that should have made it into the temp_donations table
+    # but did not.  query returns rows in raw data that are unaccounted for, paypal specific code
 
-    no_dupes_temp_donors = """
-        SELECT donor_last_name, donor_first_name, COUNT(*)
-        FROM temp_donors
-        GROUP BY donor_last_name, donor_first_name
-        HAVING COUNT(*) > 1"""
-    no_dupes_temp_donors_df = pd.read_sql_query(no_dupes_temp_donors, conn)
+    validation_dict = validate_agnostic(conn, raw_data_tablename, trans_id_fieldname)
 
-    no_dupes_donors = """
-        SELECT donor_reporting_name, COUNT(*)
-        FROM donors
-        GROUP BY donor_reporting_name
-        HAVING COUNT(*) > 1"""
-    no_dupes_donors_df = pd.read_sql_query(no_dupes_donors, conn)
+    all_unaccounted_trans = f"""
+        SELECT rpd.*
+        FROM {raw_data_tablename} as rpd
+        LEFT JOIN temp_donations td
+            ON
+            td.source_trans_id = rpd.transaction_id
+        LEFT JOIN donations d
+            ON
+            rpd.transaction_id = d.source_trans_id
+        where (rpd.type ='General Payment'
+            or rpd.type ='Mobile Payment') and
+            td.source_trans_id is NULL and
+            d.source_trans_id is NULL"""
+    unaccounted_trans_df = pd.read_sql_query(all_unaccounted_trans, conn)
+    validation_dict["unaccounted_trans_df"]=unaccounted_trans_df
+    return validation_dict
 
-    no_dupes_temp_aliases = """
-        SELECT alias_first_name, alias_email, alias_phone, alias_address_1, alias_address_2, alias_city, 
-            alias_zip, alias_country, alias_middle_name, alias_last_name, alias_state, COUNT(*)
-        FROM temp_aliases
-        GROUP BY alias_first_name, alias_email, alias_phone, alias_address_1, alias_address_2, alias_city, 
-            alias_zip, alias_country, alias_middle_name, alias_last_name, alias_state
-        HAVING COUNT(*) > 1"""
-    no_dupes_temp_aliases_df = pd.read_sql_query(no_dupes_temp_aliases, conn)
-
-# this looks for rows in alias table where every non-primary key field is the same
-    no_dupes_aliases = """
-        SELECT GROUP_CONCAT(alias_id_pk) AS duplicate_ids, alias_first_name, alias_email, alias_phone, alias_address_1, alias_address_2, alias_city, 
-            alias_zip, alias_country, alias_middle_name, alias_last_name, alias_state, COUNT(*)
-        FROM aliases
-        GROUP BY alias_first_name, alias_email, alias_phone, alias_address_1, alias_address_2, alias_city, 
-            alias_zip, alias_country, alias_middle_name, alias_last_name, alias_state
-        HAVING COUNT(*) > 1"""
-    no_dupes_aliases_df = pd.read_sql_query(no_dupes_aliases, conn)
-
-    return {"no_dupes_rowcount":no_dupes_rowcount , 
-            "no_dupes_rowcount_raw":no_dupes_rowcount_raw , 
-            "unaccounted_trans_df":unaccounted_trans_df ,
-            "no_dupes_donations_df":no_dupes_donations_df ,
-            "no_dupes_temp_donors_df":no_dupes_temp_donors_df ,
-            "no_dupes_donors_df":no_dupes_donors_df ,
-            "no_dupes_temp_aliases_df":no_dupes_temp_aliases_df ,
-            "no_dupes_aliases_df":no_dupes_aliases_df}
- 
