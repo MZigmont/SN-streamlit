@@ -8,8 +8,9 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
 import io
 import pandas as pd
-import bluepay_ingestion as bi
-import paypal_ingestion as pi
+import ingestion.bluepay_ingestion as bi
+import ingestion.paypal_ingestion as pi
+import ingestion.cardpointe_ingestion as ci
 import validation_display as vd
 import error_correction as ec
 import reports
@@ -113,7 +114,7 @@ def main():
 
         elif operation == 'Upload CSV':
             st.dataframe(udb.get_latest_transaction(conn))
-            payment_processor = st.radio("What source is the file?", ["Bluepay / Clover" , "Paypal"])
+            payment_processor = st.radio("What source is the file?", ["Bluepay / Clover" , "Paypal", "CardPointe"])
             st.subheader("Upload CSV File")
             uploaded_file = st.file_uploader("Choose a CSV file", type=['csv'])
             if uploaded_file is not None:
@@ -126,14 +127,19 @@ def main():
                         results_dict = bi.ingest_data(df, conn)
                     elif payment_processor == "Paypal":
                         results_dict = pi.ingest_data(df, conn)
+                    elif payment_processor == "CardPointe":
+                        results_dict = ci.ingest_data(df, conn)
                     else:
                         st.error(f"Unexpected radio button value {payment_processor}")
                         raise NotImplementedError("Unexpected radio button value")
+                    
+                    temp_raw_data = results_dict['temp_raw_data']
                     staged_data = results_dict['temp_donations']
                     staged_donors = results_dict['temp_donors']
                     staged_aliases = results_dict['temp_aliases']
                     validation_dict = results_dict['validation_dict']
-
+                    st.text("temp_raw_data")
+                    st.dataframe(temp_raw_data)
                     st.text("temp_donations")
                     st.dataframe(staged_data)
                     st.text("staged_donors")

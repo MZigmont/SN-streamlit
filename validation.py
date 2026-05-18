@@ -101,16 +101,57 @@ def validate_bluepay(conn, raw_data_tablename:str, trans_id_fieldname:str):
         SELECT rbd.*
         FROM {raw_data_tablename} as rbd
         LEFT JOIN temp_donations td
-            ON
-            td.source_trans_id = rbd.id
+            on (rbd.id = td.source_trans_id
+            and td.trans_source_id_fk = 1) 
+            or ('B' || rbd.id = td.source_trans_id 
+            and td.trans_source_id_fk = 4)
         LEFT JOIN donations d
-            ON
-            rbd.id = d.source_trans_id
-        where rbd.trans_type in ('SALE', 'VOID', 'REFUND') and
-            rbd.amount > 0 and
-            rbd.status = '1' and
+            on (rbd.id = d.source_trans_id
+            and d.trans_source_id_fk = 1) 
+            or ('B' || rbd.id = d.source_trans_id 
+            and d.trans_source_id_fk = 4)       
+        where NOT (rbd.trans_type in ('AUTH') or
+            rbd.amount = 0 or
+            rbd.status in ('0', 'E')) and
             td.source_trans_id is NULL and
             d.source_trans_id is NULL"""
+    unaccounted_trans_df = pd.read_sql_query(all_unaccounted_trans, conn)
+    validation_dict["unaccounted_trans_df"]=unaccounted_trans_df
+    return validation_dict
+
+def validate_cardpointe(conn, raw_data_tablename:str, trans_id_fieldname:str):
+    # this query checks for transactions in the raw data that should have made it into the temp_donations table
+    # but did not.  query returns rows in raw data that are unaccounted for, cardpointe specific code
+
+    validation_dict = validate_agnostic(conn, raw_data_tablename, trans_id_fieldname)
+
+    all_unaccounted_trans = f"""
+        SELECT rcd.*
+        FROM {raw_data_tablename} as rcd
+        LEFT JOIN temp_donations td
+            ON
+            (rcd.{trans_id_fieldname} = td.source_trans_id
+            and td.trans_source_id_fk = 4) 
+            or (rcd.{trans_id_fieldname} = 'B' || td.source_trans_id 
+            and td.trans_source_id_fk = 1)
+        LEFT JOIN donations d
+            ON
+            (rcd.{trans_id_fieldname} = d.source_trans_id
+            and d.trans_source_id_fk = 4) 
+            or (rcd.{trans_id_fieldname} = 'B' || d.source_trans_id 
+            and d.trans_source_id_fk = 1)
+        where td.source_trans_id is NULL and
+            d.source_trans_id is NULL and
+            NOT (rcd.amount = 0 or
+            rcd.status in ('DECLINED', 'FAILED', 'VERIFIED') or
+            rcd.method = 'VERIFY')
+            """
+    # BELOW DEFINES WHAT WE THINK IS INVALID AS OF 3/2/26
+    # amount = 0 is invalid
+    # status = 'DECLINED' or 'FAILED' is invalid
+    # status = 'VERIFIED' is invalid
+    # method = 'VERIFY' is invalid
+
     unaccounted_trans_df = pd.read_sql_query(all_unaccounted_trans, conn)
     validation_dict["unaccounted_trans_df"]=unaccounted_trans_df
     return validation_dict
@@ -127,12 +168,15 @@ def validate_paypal(conn, raw_data_tablename:str, trans_id_fieldname:str):
         LEFT JOIN temp_donations td
             ON
             td.source_trans_id = rpd.transaction_id
+            and td.trans_source_id_fk = 2
         LEFT JOIN donations d
             ON
             rpd.transaction_id = d.source_trans_id
-        where (rpd.type ='General Payment'
-            or rpd.type ='Mobile Payment') and
-            td.source_trans_id is NULL and
+            and d.trans_source_id_fk = 2
+        where NOT (rpd.type in ('General Currency Conversion', 
+                            'User Initiated Currency Conversion', 
+                            'User Initiated Withdrawal') OR rpd.net = 0) AND
+            td.source_trans_id is NULL AND
             d.source_trans_id is NULL"""
     unaccounted_trans_df = pd.read_sql_query(all_unaccounted_trans, conn)
     validation_dict["unaccounted_trans_df"]=unaccounted_trans_df
