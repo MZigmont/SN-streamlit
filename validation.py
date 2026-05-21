@@ -7,105 +7,156 @@
 #   DONE:   check that there are no duplicate aliases, e.g. same value in each field
 
 
+from dataclasses import dataclass
+
 import pandas as pd
 
-# validating tables regardless of bluepay/paypal source
-def validate_agnostic(conn, raw_data_tablename:str, trans_id_fieldname:str):
-    
-    # making sure no duplicates in temp_donations table, bluepay/paypal agnostic
-    no_dupes_trans_id = """
+import constants
+
+
+@dataclass(frozen=True)
+class ValidationQuery:
+    short_name: str
+    table_name: str
+    query: str
+
+    def execute(self, conn: "pd.io.sql.SQLDatabase") -> pd.DataFrame:
+        return pd.read_sql_query(self.query, conn)
+
+
+def _run_queries(conn, queries: list[ValidationQuery]) -> dict[str, pd.DataFrame]:
+    return {query.short_name: query.execute(conn) for query in queries}
+
+
+def _run_agnostic(
+    conn,
+    raw_data_query: ValidationQuery,
+) -> dict[str, pd.DataFrame]:
+    return _run_queries(
+        conn,
+        [
+            NO_DUPES_TRANS_ID,
+            raw_data_query,
+            NO_DUPES_DONATIONS,
+            NO_DUPES_TEMP_DONORS,
+            NO_DUPES_DONORS,
+            NO_DUPES_TEMP_ALIASES,
+            NO_DUPES_ALIASES,
+        ],
+    )
+
+
+NO_DUPES_TRANS_ID = ValidationQuery(
+    short_name="Duplicate transaction IDs in temp donations",
+    table_name=constants.TEMP_DONATIONS_TABLE,
+    query=f"""
         SELECT source_trans_id, COUNT(*) AS count
-        FROM temp_donations
+        FROM {constants.TEMP_DONATIONS_TABLE}
         GROUP BY source_trans_id
-        HAVING COUNT(*) > 1"""
-    cursor=conn.cursor()
-    cursor.execute(no_dupes_trans_id)
-    rows = cursor.fetchall()  # Fetch all results
-    no_dupes_rowcount = len(rows)  # Count the number of rows
+        HAVING COUNT(*) > 1""",
+)
 
-    # looking for dupes in the raw data passed into the validation function, bluepay/paypal agnostic
-    no_dupes_raw_data = f"""
-        SELECT {trans_id_fieldname}, COUNT(*) AS count
-        FROM {raw_data_tablename}
-        GROUP BY {trans_id_fieldname}
-        HAVING COUNT(*) > 1"""
-    cursor.execute(no_dupes_raw_data)
-    rows = cursor.fetchall()  # Fetch all results
-    no_dupes_rowcount_raw = len(rows)  # Count the number of rows
-
-    # checking for dupes in official donations table, bluepay/paypal agnostic
-    no_dupes_donations = """
+NO_DUPES_DONATIONS = ValidationQuery(
+    short_name="Duplicate transaction IDs in donations",
+    table_name=constants.DONATIONS_TABLE,
+    query=f"""
         SELECT source_trans_id, source_name, COUNT(*)
-        FROM donations
-        LEFT JOIN trans_source
+        FROM {constants.DONATIONS_TABLE}
+        LEFT JOIN {constants.TRANS_SOURCE_TABLE}
         ON
-            donations.trans_source_id_fk = trans_source.source_id_pk
+            {constants.DONATIONS_TABLE}.trans_source_id_fk = {constants.TRANS_SOURCE_TABLE}.source_id_pk
         WHERE
-            trans_source.source_id_pk <> 3
+            {constants.TRANS_SOURCE_TABLE}.source_id_pk <> 3
         GROUP BY source_trans_id, trans_source_id_fk
-        HAVING COUNT(*) > 1"""
-    no_dupes_donations_df = pd.read_sql_query(no_dupes_donations, conn)
+        HAVING COUNT(*) > 1""",
+)
 
-    # checking for dupes in temp donors table, bluepay/paypal agnostic
-    no_dupes_temp_donors = """
+NO_DUPES_TEMP_DONORS = ValidationQuery(
+    short_name="Duplicate donor names in temp donors",
+    table_name=constants.TEMP_DONORS_TABLE,
+    query=f"""
         SELECT donor_last_name, donor_first_name, COUNT(*)
-        FROM temp_donors
+        FROM {constants.TEMP_DONORS_TABLE}
         GROUP BY donor_last_name, donor_first_name
-        HAVING COUNT(*) > 1"""
-    no_dupes_temp_donors_df = pd.read_sql_query(no_dupes_temp_donors, conn)
+        HAVING COUNT(*) > 1""",
+)
 
-    # checking for dupes in official donors table, bluepay/paypal agnostic
-    no_dupes_donors = """
+NO_DUPES_DONORS = ValidationQuery(
+    short_name="Duplicate donors in donors",
+    table_name=constants.DONORS_TABLE,
+    query=f"""
         SELECT donor_reporting_name, donor_class_year, COUNT(*)
-        FROM donors
+        FROM {constants.DONORS_TABLE}
         GROUP BY donor_reporting_name, donor_class_year
-        HAVING COUNT(*) > 1"""
-    no_dupes_donors_df = pd.read_sql_query(no_dupes_donors, conn)
+        HAVING COUNT(*) > 1""",
+)
 
-    # checking for dupes in temp_aliases, bluepay/paypal agnostic
-    no_dupes_temp_aliases = """
+NO_DUPES_TEMP_ALIASES = ValidationQuery(
+    short_name="Duplicate aliases in temp aliases",
+    table_name=constants.TEMP_ALIASES_TABLE,
+    query=f"""
         SELECT GROUP_CONCAT(alias_id_pk) AS duplicate_ids, alias_first_name, alias_email, alias_phone, alias_address_1, alias_address_2, alias_city, 
             alias_zip, alias_country, alias_middle_name, alias_last_name, alias_state, COUNT(*)
-        FROM temp_aliases
+        FROM {constants.TEMP_ALIASES_TABLE}
         GROUP BY alias_first_name, alias_email, alias_phone, alias_address_1, alias_address_2, alias_city, 
             alias_zip, alias_country, alias_middle_name, alias_last_name, alias_state
-        HAVING COUNT(*) > 1"""
-    no_dupes_temp_aliases_df = pd.read_sql_query(no_dupes_temp_aliases, conn)
+        HAVING COUNT(*) > 1""",
+)
 
-    # this looks for rows in alias table where every non-primary key field is the same, bluepay/paypal agnostic
-    no_dupes_aliases = """
+NO_DUPES_ALIASES = ValidationQuery(
+    short_name="Duplicate aliases in aliases",
+    table_name=constants.ALIASES_TABLE,
+    query=f"""
         SELECT GROUP_CONCAT(alias_id_pk) AS duplicate_ids, alias_first_name, alias_email, alias_phone, alias_address_1, alias_address_2, alias_city, 
             alias_zip, alias_country, alias_middle_name, alias_last_name, alias_state, COUNT(*)
-        FROM aliases
+        FROM {constants.ALIASES_TABLE}
         GROUP BY alias_first_name, alias_email, alias_phone, alias_address_1, alias_address_2, alias_city, 
             alias_zip, alias_country, alias_middle_name, alias_last_name, alias_state
-        HAVING COUNT(*) > 1"""
-    no_dupes_aliases_df = pd.read_sql_query(no_dupes_aliases, conn)
+        HAVING COUNT(*) > 1""",
+)
 
-    return {"no_dupes_rowcount":no_dupes_rowcount , 
-            "no_dupes_rowcount_raw":no_dupes_rowcount_raw , 
-            #"unaccounted_trans_df":unaccounted_trans_df ,
-            "no_dupes_donations_df":no_dupes_donations_df ,
-            "no_dupes_temp_donors_df":no_dupes_temp_donors_df ,
-            "no_dupes_donors_df":no_dupes_donors_df ,
-            "no_dupes_temp_aliases_df":no_dupes_temp_aliases_df ,
-            "no_dupes_aliases_df":no_dupes_aliases_df}
- 
-def validate_bluepay(conn, raw_data_tablename:str, trans_id_fieldname:str):
-    # this query checks for transactions in the raw data that should have made it into the temp_donations table
-    # but did not.  query returns rows in raw data that are unaccounted for, bluepay specific code
+NO_DUPES_RAW_DATA_BLUEPAY = ValidationQuery(
+    short_name="Duplicate transaction IDs in raw data",
+    table_name=constants.BLUEPAY_RAW_TABLE_NAME,
+    query=f"""
+        SELECT {constants.BLUEPAY_TRANS_ID_FIELD}, COUNT(*) AS count
+        FROM {constants.BLUEPAY_RAW_TABLE_NAME}
+        GROUP BY {constants.BLUEPAY_TRANS_ID_FIELD}
+        HAVING COUNT(*) > 1""",
+)
 
-    validation_dict = validate_agnostic(conn, raw_data_tablename, trans_id_fieldname)
+NO_DUPES_RAW_DATA_CARDPOINTE = ValidationQuery(
+    short_name="Duplicate transaction IDs in raw data",
+    table_name=constants.CARDPOINTE_RAW_TABLE_NAME,
+    query=f"""
+        SELECT {constants.CARDPOINTE_TRANS_ID_FIELD}, COUNT(*) AS count
+        FROM {constants.CARDPOINTE_RAW_TABLE_NAME}
+        GROUP BY {constants.CARDPOINTE_TRANS_ID_FIELD}
+        HAVING COUNT(*) > 1""",
+)
 
-    all_unaccounted_trans = f"""
+NO_DUPES_RAW_DATA_PAYPAL = ValidationQuery(
+    short_name="Duplicate transaction IDs in raw data",
+    table_name=constants.PAYPAL_RAW_TABLE_NAME,
+    query=f"""
+        SELECT {constants.PAYPAL_TRANS_ID_FIELD}, COUNT(*) AS count
+        FROM {constants.PAYPAL_RAW_TABLE_NAME}
+        GROUP BY {constants.PAYPAL_TRANS_ID_FIELD}
+        HAVING COUNT(*) > 1""",
+)
+
+UNACCOUNTED_BLUEPAY = ValidationQuery(
+    short_name="Unaccounted Bluepay transactions",
+    table_name=constants.BLUEPAY_RAW_TABLE_NAME,
+    query=f"""
         SELECT rbd.*
-        FROM {raw_data_tablename} as rbd
-        LEFT JOIN temp_donations td
+        FROM {constants.BLUEPAY_RAW_TABLE_NAME} as rbd
+        LEFT JOIN {constants.TEMP_DONATIONS_TABLE} td
             on (rbd.id = td.source_trans_id
             and td.trans_source_id_fk = 1) 
             or ('B' || rbd.id = td.source_trans_id 
             and td.trans_source_id_fk = 4)
-        LEFT JOIN donations d
+        LEFT JOIN {constants.DONATIONS_TABLE} d
             on (rbd.id = d.source_trans_id
             and d.trans_source_id_fk = 1) 
             or ('B' || rbd.id = d.source_trans_id 
@@ -114,62 +165,46 @@ def validate_bluepay(conn, raw_data_tablename:str, trans_id_fieldname:str):
             rbd.amount = 0 or
             rbd.status in ('0', 'E')) and
             td.source_trans_id is NULL and
-            d.source_trans_id is NULL"""
-    unaccounted_trans_df = pd.read_sql_query(all_unaccounted_trans, conn)
-    validation_dict["unaccounted_trans_df"]=unaccounted_trans_df
-    return validation_dict
+            d.source_trans_id is NULL""",
+)
 
-def validate_cardpointe(conn, raw_data_tablename:str, trans_id_fieldname:str):
-    # this query checks for transactions in the raw data that should have made it into the temp_donations table
-    # but did not.  query returns rows in raw data that are unaccounted for, cardpointe specific code
-
-    validation_dict = validate_agnostic(conn, raw_data_tablename, trans_id_fieldname)
-
-    all_unaccounted_trans = f"""
+UNACCOUNTED_CARDPOINTE = ValidationQuery(
+    short_name="Unaccounted Cardpointe transactions",
+    table_name=constants.CARDPOINTE_RAW_TABLE_NAME,
+    query=f"""
         SELECT rcd.*
-        FROM {raw_data_tablename} as rcd
-        LEFT JOIN temp_donations td
+        FROM {constants.CARDPOINTE_RAW_TABLE_NAME} as rcd
+        LEFT JOIN {constants.TEMP_DONATIONS_TABLE} td
             ON
-            (rcd.{trans_id_fieldname} = td.source_trans_id
+            (rcd.{constants.CARDPOINTE_TRANS_ID_FIELD} = td.source_trans_id
             and td.trans_source_id_fk = 4) 
-            or (rcd.{trans_id_fieldname} = 'B' || td.source_trans_id 
+            or (rcd.{constants.CARDPOINTE_TRANS_ID_FIELD} = 'B' || td.source_trans_id 
             and td.trans_source_id_fk = 1)
-        LEFT JOIN donations d
+        LEFT JOIN {constants.DONATIONS_TABLE} d
             ON
-            (rcd.{trans_id_fieldname} = d.source_trans_id
+            (rcd.{constants.CARDPOINTE_TRANS_ID_FIELD} = d.source_trans_id
             and d.trans_source_id_fk = 4) 
-            or (rcd.{trans_id_fieldname} = 'B' || d.source_trans_id 
+            or (rcd.{constants.CARDPOINTE_TRANS_ID_FIELD} = 'B' || d.source_trans_id 
             and d.trans_source_id_fk = 1)
         where td.source_trans_id is NULL and
             d.source_trans_id is NULL and
             NOT (rcd.amount = 0 or
             rcd.status in ('DECLINED', 'FAILED', 'VERIFIED') or
             rcd.method = 'VERIFY')
-            """
-    # BELOW DEFINES WHAT WE THINK IS INVALID AS OF 3/2/26
-    # amount = 0 is invalid
-    # status = 'DECLINED' or 'FAILED' is invalid
-    # status = 'VERIFIED' is invalid
-    # method = 'VERIFY' is invalid
+            """,
+)
 
-    unaccounted_trans_df = pd.read_sql_query(all_unaccounted_trans, conn)
-    validation_dict["unaccounted_trans_df"]=unaccounted_trans_df
-    return validation_dict
-
-def validate_paypal(conn, raw_data_tablename:str, trans_id_fieldname:str):
-    # this query checks for transactions in the raw data that should have made it into the temp_donations table
-    # but did not.  query returns rows in raw data that are unaccounted for, paypal specific code
-
-    validation_dict = validate_agnostic(conn, raw_data_tablename, trans_id_fieldname)
-
-    all_unaccounted_trans = f"""
+UNACCOUNTED_PAYPAL = ValidationQuery(
+    short_name="Unaccounted PayPal transactions",
+    table_name=constants.PAYPAL_RAW_TABLE_NAME,
+    query=f"""
         SELECT rpd.*
-        FROM {raw_data_tablename} as rpd
-        LEFT JOIN temp_donations td
+        FROM {constants.PAYPAL_RAW_TABLE_NAME} as rpd
+        LEFT JOIN {constants.TEMP_DONATIONS_TABLE} td
             ON
             td.source_trans_id = rpd.transaction_id
             and td.trans_source_id_fk = 2
-        LEFT JOIN donations d
+        LEFT JOIN {constants.DONATIONS_TABLE} d
             ON
             rpd.transaction_id = d.source_trans_id
             and d.trans_source_id_fk = 2
@@ -177,8 +212,38 @@ def validate_paypal(conn, raw_data_tablename:str, trans_id_fieldname:str):
                             'User Initiated Currency Conversion', 
                             'User Initiated Withdrawal') OR rpd.net = 0) AND
             td.source_trans_id is NULL AND
-            d.source_trans_id is NULL"""
-    unaccounted_trans_df = pd.read_sql_query(all_unaccounted_trans, conn)
-    validation_dict["unaccounted_trans_df"]=unaccounted_trans_df
+            d.source_trans_id is NULL""",
+)
+
+# validating tables regardless of bluepay/paypal source
+def validate_bluepay(conn):
+    # this query checks for transactions in the raw data that should have made it into the temp_donations table
+    # but did not.  query returns rows in raw data that are unaccounted for, bluepay specific code
+
+    validation_dict = _run_agnostic(conn, NO_DUPES_RAW_DATA_BLUEPAY)
+    validation_dict.update(_run_queries(conn, [UNACCOUNTED_BLUEPAY]))
+    return validation_dict
+
+def validate_cardpointe(conn):
+    # this query checks for transactions in the raw data that should have made it into the temp_donations table
+    # but did not.  query returns rows in raw data that are unaccounted for, cardpointe specific code
+
+    validation_dict = _run_agnostic(conn, NO_DUPES_RAW_DATA_CARDPOINTE)
+    all_unaccounted_trans = UNACCOUNTED_CARDPOINTE
+    # BELOW DEFINES WHAT WE THINK IS INVALID AS OF 3/2/26
+    # amount = 0 is invalid
+    # status = 'DECLINED' or 'FAILED' is invalid
+    # status = 'VERIFIED' is invalid
+    # method = 'VERIFY' is invalid
+
+    validation_dict.update(_run_queries(conn, [all_unaccounted_trans]))
+    return validation_dict
+
+def validate_paypal(conn):
+    # this query checks for transactions in the raw data that should have made it into the temp_donations table
+    # but did not.  query returns rows in raw data that are unaccounted for, paypal specific code
+
+    validation_dict = _run_agnostic(conn, NO_DUPES_RAW_DATA_PAYPAL)
+    validation_dict.update(_run_queries(conn, [UNACCOUNTED_PAYPAL]))
     return validation_dict
 

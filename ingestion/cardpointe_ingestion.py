@@ -6,8 +6,16 @@ import sys #system commands
 import pandas as pd
 import validation as val
 import update_db as udb
+from constants import (
+    ALIASES_TABLE,
+    CARDPOINTE_RAW_TABLE_NAME,
+    DONATIONS_TABLE,
+    DONORS_TABLE,
+    TEMP_ALIASES_TABLE,
+    TEMP_DONATIONS_TABLE,
+    TEMP_DONORS_TABLE,
+)
 
-raw_table_name = "raw_cardpointe_data" 
 def ingest_data(df: pd.DataFrame, conn):
     df.columns = (
         df.columns
@@ -27,7 +35,7 @@ def ingest_data(df: pd.DataFrame, conn):
     df['my_last_name']   = parts.str[-1]
     df['my_middle_name'] = parts.str[1:-1].str.join(' ')
 
-    df.to_sql(raw_table_name, conn, if_exists='replace', index=False)
+    df.to_sql(CARDPOINTE_RAW_TABLE_NAME, conn, if_exists='replace', index=False)
     cursor = conn.cursor()
     udb.create_staging_tables(cursor)
 
@@ -38,7 +46,7 @@ def ingest_data(df: pd.DataFrame, conn):
 
     def alias_match(match_type: str):
         return f"""
-        insert into temp_donations
+        insert into {TEMP_DONATIONS_TABLE}
         select null ,
             rcd.transaction_num ,
             max(rcd.date) ,
@@ -53,18 +61,18 @@ def ingest_data(df: pd.DataFrame, conn):
             null ,
             max(rcd.amount) ,
             '{match_type}'
-        from {raw_table_name} rcd
-        LEFT join donations d
+        from {CARDPOINTE_RAW_TABLE_NAME} rcd
+        LEFT join {DONATIONS_TABLE} d
             ON (rcd.transaction_num = d.source_trans_id
             AND d.trans_source_id_fk = 4) 
             OR (rcd.transaction_num = 'B' || d.source_trans_id 
             AND d.trans_source_id_fk = 1)
-        LEFT JOIN aliases a 
+        LEFT JOIN {ALIASES_TABLE} a 
             ON rcd.phone_number COLLATE NOCASE = a.alias_phone COLLATE NOCASE
             OR rcd.email COLLATE NOCASE = a.alias_email COLLATE NOCASE
             OR (rcd.my_first_name COLLATE NOCASE = a.alias_first_name COLLATE NOCASE and
             rcd.my_last_name COLLATE NOCASE = a.alias_last_name COLLATE NOCASE)
-        LEFT JOIN temp_donations td
+        LEFT JOIN {TEMP_DONATIONS_TABLE} td
             ON (rcd.transaction_num = td.source_trans_id
             AND td.trans_source_id_fk = 4) 
             OR (rcd.transaction_num = 'B' || td.source_trans_id 
@@ -79,7 +87,7 @@ def ingest_data(df: pd.DataFrame, conn):
         """
     
     new_donors = f"""
-    insert into temp_donors
+    insert into {TEMP_DONORS_TABLE}
     select NULL ,
         max(rcd.my_first_name) || ' ' || max(rcd.my_last_name) ,
         max(rcd.my_last_name) ,
@@ -89,13 +97,13 @@ def ingest_data(df: pd.DataFrame, conn):
         rcd.phone_number , 
         rcd.email,
         NULL 
-    from {raw_table_name} rcd
-    LEFT join donations d
+    from {CARDPOINTE_RAW_TABLE_NAME} rcd
+    LEFT join {DONATIONS_TABLE} d
             ON (rcd.transaction_num = d.source_trans_id
             AND d.trans_source_id_fk = 4) 
             OR (rcd.transaction_num = 'B' || d.source_trans_id 
             AND d.trans_source_id_fk = 1)
-    LEFT join temp_donations td
+    LEFT join {TEMP_DONATIONS_TABLE} td
         ON (rcd.transaction_num = td.source_trans_id
         AND d.trans_source_id_fk = 4) 
         OR (rcd.transaction_num = 'B' || td.source_trans_id 
@@ -109,14 +117,14 @@ def ingest_data(df: pd.DataFrame, conn):
         rcd.email ,
         rcd.phone_number """
     
-    new_prev_max_id_query = """
-    update temp_donors set prev_max_id = (
-        select max(donor_id_pk) from donors)
+    new_prev_max_id_query = f"""
+    update {TEMP_DONORS_TABLE} set prev_max_id = (
+        select max(donor_id_pk) from {DONORS_TABLE})
     """
 
     #  NOTE: in between these queries, temp_donors gets pushed to the live donors table
     new_aliases_for_new_donors = f"""
-        insert into temp_aliases
+        insert into {TEMP_ALIASES_TABLE}
         select distinct null ,
             d.donor_id_pk ,
             rcd.my_first_name ,
@@ -130,12 +138,12 @@ def ingest_data(df: pd.DataFrame, conn):
             rcd.my_middle_name ,
             rcd.my_last_name ,
             rcd.state
-        from temp_donors td
-        left join {raw_table_name} rcd
+        from {TEMP_DONORS_TABLE} td
+        left join {CARDPOINTE_RAW_TABLE_NAME} rcd
         on
             rcd.phone_number = td.matched_phone and
             rcd.email = td.matched_email 
-        left join donors d
+        left join {DONORS_TABLE} d
         on
             td.donor_first_name = d.donor_first_name and
             td.donor_last_name = d.donor_last_name and
@@ -156,7 +164,7 @@ def ingest_data(df: pd.DataFrame, conn):
     cursor.execute(alias_match('alias match'))
     cursor.execute(new_donors)
     cursor.execute(new_prev_max_id_query)
-    udb.push_temp_table_to_live("temp_donors", "donors", [
+    udb.push_temp_table_to_live(TEMP_DONORS_TABLE, DONORS_TABLE, [
             "NULL",
             "donor_reporting_name",
             "donor_last_name",
@@ -164,18 +172,27 @@ def ingest_data(df: pd.DataFrame, conn):
             "donor_middle_name",
             "donor_class_year"], conn)
     cursor.execute(new_aliases_for_new_donors)
-    udb.push_temp_table_to_live("temp_aliases", "aliases", ["*"], conn)
+    udb.push_temp_table_to_live(TEMP_ALIASES_TABLE, ALIASES_TABLE, ["*"], conn)
     cursor.execute(alias_match('new donor'))
-    udb.push_temp_table_to_live("temp_donations", "donations", 
+    udb.push_temp_table_to_live(TEMP_DONATIONS_TABLE, DONATIONS_TABLE, 
                                 ["my_trans_id_pk", "source_trans_id", "date_time", "alias_id_fk", "trans_source_id_fk", "donation_currrency",
                                  "donation_gross_amt", "fee_currency", "fee_amt", "conversion_rate", "donation_gross_USD", "fee_USD", "donation_net_USD"],
                                  conn)
 
-    data_donors = pd.read_sql_query("SELECT * FROM temp_donors", conn)
-    data_aliases = pd.read_sql_query("SELECT * FROM temp_aliases", conn)
-    data_donations = pd.read_sql_query("SELECT * FROM temp_donations", conn)
+    data_donors = pd.read_sql_query(
+        f"SELECT * FROM {TEMP_DONORS_TABLE}",
+        conn,
+    )
+    data_aliases = pd.read_sql_query(
+        f"SELECT * FROM {TEMP_ALIASES_TABLE}",
+        conn,
+    )
+    data_donations = pd.read_sql_query(
+        f"SELECT * FROM {TEMP_DONATIONS_TABLE}",
+        conn,
+    )
 
-    validation_dict = val.validate_cardpointe(conn, raw_table_name , "transaction_num")
+    validation_dict = val.validate_cardpointe(conn)
 
 # TODO: 2/23/2026 - test this and finish
     return {'temp_donations':data_donations, 

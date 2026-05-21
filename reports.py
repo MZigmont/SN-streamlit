@@ -2,16 +2,18 @@ import pandas as pd
 import io
 from openpyxl import Workbook
 
+import constants
+
 #@title Total Gross USD Donations
 # total gross USD donations
 def tot_gr_USD_don(startdate, enddate, conn):
 
     c = conn.cursor()
 
-    total_donations = c.execute("""
+    total_donations = c.execute(f"""
     select
         sum( donation_gross_USD )
-    from donations
+    from {constants.DONATIONS_TABLE}
     where
         date_time >= ? and
         date_time <= ?
@@ -31,15 +33,15 @@ def tot_gr_USD_dons_by_don(startdate, enddate, conn):
 
     c = conn.cursor()
 
-    donations_by_donor = c.execute("""
+    donations_by_donor = c.execute(f"""
     select
         d3.donor_reporting_name ,
         sum( donation_gross_USD ),
         d3.donor_class_year
-    from donations d2
-    left join aliases a1
+    from {constants.DONATIONS_TABLE} d2
+    left join {constants.ALIASES_TABLE} a1
     on d2.alias_id_fk = a1.alias_id_pk
-    left join donors d3
+    left join {constants.DONORS_TABLE} d3
     on a1.donor_id_fk = d3.donor_id_pk
     where
         date_time >= ? and
@@ -67,8 +69,8 @@ def tot_net_dons_p_yr(startdate, enddate, conn):
 
     c = conn.cursor()
 
-    donations_by_year = c.execute("""
-    SELECT strftime('%Y', date_time), sum(donation_net_USD) from donations
+    donations_by_year = c.execute(f"""
+    SELECT strftime('%Y', date_time), sum(donation_net_USD) from {constants.DONATIONS_TABLE}
     GROUP BY strftime('%Y', date_time)
     ORDER BY strftime('%Y', date_time) ASC
     """).fetchall()
@@ -77,8 +79,8 @@ def tot_net_dons_p_yr(startdate, enddate, conn):
     for row in donations_by_year:
         print(row)
 
-    donations_by_fiscal_year = c.execute("""
-    SELECT strftime('%Y', date(date_time , '+92 day'))as FiscalYear, sum(donation_net_USD) from donations
+    donations_by_fiscal_year = c.execute(f"""
+    SELECT strftime('%Y', date(date_time , '+92 day'))as FiscalYear, sum(donation_net_USD) from {constants.DONATIONS_TABLE}
     GROUP BY strftime('%Y', date(date_time , '+92 day'))
     ORDER BY strftime('%Y', date(date_time , '+92 day')) ASC
     """).fetchall()
@@ -115,13 +117,13 @@ def ct_don(startdate, enddate, conn):
 
     c = conn.cursor()
 
-    count = c.execute("""
+    count = c.execute(f"""
     select
         count( distinct d3.donor_reporting_name )
-    from donations d2
-    left join aliases a1
+    from {constants.DONATIONS_TABLE} d2
+    left join {constants.ALIASES_TABLE} a1
     on d2.alias_id_fk = a1.alias_id_pk
-    left join donors d3
+    left join {constants.DONORS_TABLE} d3
     on a1.donor_id_fk = d3.donor_id_pk
     where
         date_time >= ? and
@@ -140,14 +142,14 @@ def don_b_cls(startdate, enddate, conn):
 
     c = conn.cursor()
 
-    donors_and_class = c.execute("""
+    donors_and_class = c.execute(f"""
     select
         count( distinct d3.donor_reporting_name ) ,
         d3.donor_class_year
-    from donations d2
-    left join aliases a1
+    from {constants.DONATIONS_TABLE} d2
+    left join {constants.ALIASES_TABLE} a1
     on d2.alias_id_fk = a1.alias_id_pk
-    left join donors d3
+    left join {constants.DONORS_TABLE} d3
     on a1.donor_id_fk = d3.donor_id_pk
     where
         date_time >= ? and
@@ -170,14 +172,14 @@ def dons_b_cls(startdate, enddate, conn):
 
     c = conn.cursor()
 
-    donations_and_class = c.execute("""
+    donations_and_class = c.execute(f"""
     select
         d3.donor_class_year ,
         sum( donation_gross_USD )
-    from donations d2
-    left join aliases a1
+    from {constants.DONATIONS_TABLE} d2
+    left join {constants.ALIASES_TABLE} a1
     on d2.alias_id_fk = a1.alias_id_pk
-    left join donors d3
+    left join {constants.DONORS_TABLE} d3
     on a1.donor_id_fk = d3.donor_id_pk
     where
         date_time >= ? and
@@ -199,7 +201,7 @@ def dons_in_period(startdate, enddate, conn):
 
     c = conn.cursor()
 
-    donations_in_period = c.execute("""
+    donations_in_period = c.execute(f"""
     SELECT d.my_trans_id_pk,
         d.source_trans_id,
         d.date_time,
@@ -215,10 +217,10 @@ def dons_in_period(startdate, enddate, conn):
         d.donation_gross_USD,
         d.fee_USD,
         d.donation_net_USD
-    FROM donations d
-    LEFT JOIN aliases a
+    FROM {constants.DONATIONS_TABLE} d
+    LEFT JOIN {constants.ALIASES_TABLE} a
         on d.alias_id_fk = a.alias_id_pk
-    LEFT JOIN trans_source ts
+    LEFT JOIN {constants.TRANS_SOURCE_TABLE} ts
         on d.trans_source_id_fk = ts.source_id_pk
     WHERE d.date_time >= ? AND
         d.date_time <= ?

@@ -6,9 +6,17 @@ import sys #system commands
 import pandas as pd
 import validation as val
 import update_db as udb
+from constants import (
+    ALIASES_TABLE,
+    DONATIONS_TABLE,
+    DONORS_TABLE,
+    PAYPAL_RAW_TABLE_NAME,
+    TEMP_ALIASES_TABLE,
+    TEMP_DONATIONS_TABLE,
+    TEMP_DONORS_TABLE,
+)
 
 
-raw_table_name = "raw_paypal_data" 
 def ingest_data(df: pd.DataFrame, conn):
     df.columns = (
         df.columns
@@ -27,14 +35,14 @@ def ingest_data(df: pd.DataFrame, conn):
     df['my_last_name']   = parts.str[-1]
     df['my_middle_name'] = parts.str[1:-1].str.join(' ')
 
-    df.to_sql(raw_table_name, conn, if_exists='replace', index=False)
+    df.to_sql(PAYPAL_RAW_TABLE_NAME, conn, if_exists='replace', index=False)
     cursor = conn.cursor()
     udb.create_staging_tables(cursor)
 
     # alias match is on phone or email or (first_name and last_name)
     def alias_match(match_type: str):
         return f"""
-        insert into temp_donations
+        insert into {TEMP_DONATIONS_TABLE}
         select null , --my_trans_id_pk
             rpd.transaction_id , -- source_trans_id
             max(rpd.datetime) , --date_time
@@ -49,16 +57,16 @@ def ingest_data(df: pd.DataFrame, conn):
             rpd.fee as USD_fee , --fee_USD ,
             max(rpd.net ) , --donation_net_USD
             '{match_type}'
-        from raw_paypal_data rpd
-        LEFT JOIN aliases a 
+        from {PAYPAL_RAW_TABLE_NAME} rpd
+        LEFT JOIN {ALIASES_TABLE} a 
             ON rpd.contact_phone_number COLLATE NOCASE = a.alias_phone COLLATE NOCASE
             OR rpd.from_email_address COLLATE NOCASE = a.alias_email COLLATE NOCASE
             OR (rpd.my_first_name COLLATE NOCASE = a.alias_first_name COLLATE NOCASE and
             rpd.my_last_name COLLATE NOCASE = a.alias_last_name COLLATE NOCASE)
-        LEFT JOIN donations d
+        LEFT JOIN {DONATIONS_TABLE} d
             ON rpd.transaction_id =  d.source_trans_id
             and d.trans_source_id_fk = 2
-        LEFT JOIN temp_donations td
+        LEFT JOIN {TEMP_DONATIONS_TABLE} td
             ON rpd.transaction_id = td.source_trans_id
         where (rpd.type ='General Payment'
             or rpd.type ='Mobile Payment')
@@ -83,7 +91,7 @@ def ingest_data(df: pd.DataFrame, conn):
 
     def alias_match_non_USD(match_type: str):
         return f"""
-        insert into temp_donations
+        insert into {TEMP_DONATIONS_TABLE}
         select null , --my_trans_id_pk
             rpd.transaction_id , -- source_trans_id
             max(rpd.datetime) , --date_time
@@ -98,22 +106,22 @@ def ingest_data(df: pd.DataFrame, conn):
             max(rpd2.net/rpd.net * rpd.fee) as USD_fee , --fee_USD ,
             max(rpd.net ) , --donation_net_USD
             '{match_type}'
-        from raw_paypal_data rpd
-        LEFT JOIN raw_paypal_data rpd2
+        from {PAYPAL_RAW_TABLE_NAME} rpd
+        LEFT JOIN {PAYPAL_RAW_TABLE_NAME} rpd2
             on rpd.transaction_id = rpd2.reference_txn_id and 
             (rpd.type = 'General Payment' or rpd.type = 'Mobile Payment')
             and rpd.currency is not 'USD' and
             rpd2.type ='General Currency Conversion' and
             rpd2.currency ='USD'
-        LEFT JOIN aliases a 
+        LEFT JOIN {ALIASES_TABLE} a 
             ON rpd.contact_phone_number COLLATE NOCASE = a.alias_phone COLLATE NOCASE
             OR rpd.from_email_address COLLATE NOCASE = a.alias_email COLLATE NOCASE
             OR (rpd.my_first_name COLLATE NOCASE = a.alias_first_name COLLATE NOCASE and
             rpd.my_last_name COLLATE NOCASE = a.alias_last_name COLLATE NOCASE)
-        LEFT JOIN donations d
+        LEFT JOIN {DONATIONS_TABLE} d
             ON rpd.transaction_id =  d.source_trans_id
             and d.trans_source_id_fk = 2
-        LEFT JOIN temp_donations td
+        LEFT JOIN {TEMP_DONATIONS_TABLE} td
             ON rpd.transaction_id = td.source_trans_id
             and td.trans_source_id_fk = 2
         where (rpd.type ='General Payment'
@@ -134,12 +142,12 @@ def ingest_data(df: pd.DataFrame, conn):
     with temp1 as (
     select distinct rpd1.* ,
     first_value(abs(rpd3.net/rpd2.net)) over (partition by rpd1.transaction_id order by rpd1.date ASC , rpd1.time ASC , rpd2.date ASC, rpd2.time ASC) as conversion_rate
-    from raw_paypal_data rpd1
-    left join raw_paypal_data rpd2
+    from {PAYPAL_RAW_TABLE_NAME} rpd1
+    left join {PAYPAL_RAW_TABLE_NAME} rpd2
     on
         rpd2.type = 'User Initiated Currency Conversion' and rpd2.currency = rpd1.currency and
         rpd1.datetime <= rpd2.datetime
-    left join raw_paypal_data rpd3
+    left join {PAYPAL_RAW_TABLE_NAME} rpd3
     on
         rpd2.transaction_id = rpd3.reference_txn_id
     where
@@ -147,7 +155,7 @@ def ingest_data(df: pd.DataFrame, conn):
         and rpd1.status = 'Completed'
         and rpd1.net > 0
     order by rpd1.date ASC , rpd1.time ASC , rpd2.date ASC, rpd2.time ASC
-    ) insert into temp_donations
+    ) insert into {TEMP_DONATIONS_TABLE}
     select NULL ,
         temp1.transaction_id ,
         temp1.datetime as date_time,
@@ -163,18 +171,18 @@ def ingest_data(df: pd.DataFrame, conn):
         temp1.net * temp1.conversion_rate as donation_net_USD , 
         '{match_type}'
     from temp1
-        LEFT JOIN aliases a 
+        LEFT JOIN {ALIASES_TABLE} a 
             ON temp1.contact_phone_number COLLATE NOCASE = a.alias_phone COLLATE NOCASE
             OR temp1.from_email_address COLLATE NOCASE = a.alias_email COLLATE NOCASE
             OR (temp1.my_first_name COLLATE NOCASE = a.alias_first_name COLLATE NOCASE and
             temp1.my_last_name COLLATE NOCASE = a.alias_last_name COLLATE NOCASE)
-        LEFT JOIN raw_paypal_data rpd -- explicitly removes 'General Currency Conversion' to avoid double counting
+        LEFT JOIN {PAYPAL_RAW_TABLE_NAME} rpd -- explicitly removes 'General Currency Conversion' to avoid double counting
             on temp1.transaction_id = rpd.reference_txn_id and
             rpd.type = 'General Currency Conversion'
-        LEFT JOIN donations d
+        LEFT JOIN {DONATIONS_TABLE} d
             on temp1.transaction_id = d.source_trans_id
             and d.trans_source_id_fk = 2
-        LEFT JOIN temp_donations td
+        LEFT JOIN {TEMP_DONATIONS_TABLE} td
             ON temp1.transaction_id = td.source_trans_id
             and td.trans_source_id_fk = 2
     where rpd.transaction_id is NULL and
@@ -183,8 +191,8 @@ def ingest_data(df: pd.DataFrame, conn):
         and td.source_trans_id is NULL --first time, no effect, second time, makes sure we don't insert duplicate transactions"""
 
 # create the records for brand new PayPal donors
-    new_donors = """
-    insert into temp_donors
+    new_donors = f"""
+    insert into {TEMP_DONORS_TABLE}
     select NULL ,
         max(rpd.my_first_name) || ' ' || max(rpd.my_last_name) ,
         max(rpd.my_last_name) ,
@@ -194,11 +202,11 @@ def ingest_data(df: pd.DataFrame, conn):
         rpd.contact_phone_number , 
         rpd.from_email_address,
         NULL 
-    from raw_paypal_data rpd
-    left join donations d
+    from {PAYPAL_RAW_TABLE_NAME} rpd
+    left join {DONATIONS_TABLE} d
         on rpd.transaction_id = d.source_trans_id
         and d.trans_source_id_fk = 2
-    left join temp_donations td
+    left join {TEMP_DONATIONS_TABLE} td
         on rpd.transaction_id = td.source_trans_id
     where d.source_trans_id is NULL and 
         td.source_trans_id is NULL and
@@ -208,15 +216,15 @@ def ingest_data(df: pd.DataFrame, conn):
         rpd.from_email_address ,
         rpd.contact_phone_number """
 
-    new_prev_max_id_query = """
-    update temp_donors set prev_max_id = (
-        select max(donor_id_pk) from donors)
+    new_prev_max_id_query = f"""
+    update {TEMP_DONORS_TABLE} set prev_max_id = (
+        select max(donor_id_pk) from {DONORS_TABLE})
     """
 
 
 # PAYPAL NEW ALIASES with NEW DONORS 
-    new_aliases_for_new_donors = """
-        insert into temp_aliases
+    new_aliases_for_new_donors = f"""
+        insert into {TEMP_ALIASES_TABLE}
         select distinct null ,
             d.donor_id_pk ,
             rpd.my_first_name ,
@@ -230,12 +238,12 @@ def ingest_data(df: pd.DataFrame, conn):
             rpd.my_middle_name ,
             rpd.my_last_name ,
             rpd.state_province_region_county_territory_prefecture_republic
-        from temp_donors td
-        left join raw_paypal_data rpd
+        from {TEMP_DONORS_TABLE} td
+        left join {PAYPAL_RAW_TABLE_NAME} rpd
         on
             rpd.contact_phone_number = td.matched_phone and
             rpd.from_email_address = td.matched_email 
-        left join donors d
+        left join {DONORS_TABLE} d
         on
             td.donor_first_name = d.donor_first_name and
             td.donor_last_name = d.donor_last_name and
@@ -249,7 +257,7 @@ def ingest_data(df: pd.DataFrame, conn):
     cursor.execute(alias_match_non_USD_user_iniated('alias match non USD user iniated'))
     cursor.execute(new_donors)
     cursor.execute(new_prev_max_id_query)
-    udb.push_temp_table_to_live("temp_donors", "donors", [
+    udb.push_temp_table_to_live(TEMP_DONORS_TABLE, DONORS_TABLE, [
             "NULL",
             "donor_reporting_name",
             "donor_last_name",
@@ -257,20 +265,29 @@ def ingest_data(df: pd.DataFrame, conn):
             "donor_middle_name",
             "donor_class_year"], conn)
     cursor.execute(new_aliases_for_new_donors)
-    udb.push_temp_table_to_live("temp_aliases", "aliases", ["*"], conn)
+    udb.push_temp_table_to_live(TEMP_ALIASES_TABLE, ALIASES_TABLE, ["*"], conn)
     cursor.execute(alias_match('new donor USD'))
     cursor.execute(alias_match_non_USD('new donor non USD old'))
     cursor.execute(alias_match_non_USD_user_iniated('new donor non USD user iniated'))
-    udb.push_temp_table_to_live("temp_donations", "donations", 
+    udb.push_temp_table_to_live(TEMP_DONATIONS_TABLE, DONATIONS_TABLE, 
                                 ["my_trans_id_pk", "source_trans_id", "date_time", "alias_id_fk", "trans_source_id_fk", "donation_currrency",
                                  "donation_gross_amt", "fee_currency", "fee_amt", "conversion_rate", "donation_gross_USD", "fee_USD", "donation_net_USD"],
                                  conn)
 
-    data_donors = pd.read_sql_query("SELECT * FROM temp_donors", conn)
-    data_aliases = pd.read_sql_query("SELECT * FROM temp_aliases", conn)
-    data_donations = pd.read_sql_query("SELECT * FROM temp_donations", conn)
+    data_donors = pd.read_sql_query(
+        f"SELECT * FROM {TEMP_DONORS_TABLE}",
+        conn,
+    )
+    data_aliases = pd.read_sql_query(
+        f"SELECT * FROM {TEMP_ALIASES_TABLE}",
+        conn,
+    )
+    data_donations = pd.read_sql_query(
+        f"SELECT * FROM {TEMP_DONATIONS_TABLE}",
+        conn,
+    )
 
-    validation_dict = val.validate_paypal(conn, raw_table_name , "transaction_id")
+    validation_dict = val.validate_paypal(conn)
 
     return {'temp_donations':data_donations, 
             'temp_donors':data_donors, 

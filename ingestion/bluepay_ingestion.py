@@ -12,10 +12,18 @@ import sys #system commands
 import pandas as pd
 import validation as val
 import update_db as udb
+from constants import (
+    ALIASES_TABLE,
+    BLUEPAY_RAW_TABLE_NAME,
+    DONORS_TABLE,
+    DONATIONS_TABLE,
+    TEMP_ALIASES_TABLE,
+    TEMP_DONATIONS_TABLE,
+    TEMP_DONORS_TABLE,
+)
 
-raw_table_name = "raw_bluepay_data" 
 def ingest_data(df: pd.DataFrame, conn):
-    df.to_sql(raw_table_name, conn, if_exists='replace', index=False)
+    df.to_sql(BLUEPAY_RAW_TABLE_NAME, conn, if_exists='replace', index=False)
     cursor = conn.cursor()
     udb.create_staging_tables(cursor)
 
@@ -24,7 +32,7 @@ def ingest_data(df: pd.DataFrame, conn):
     # alias match is on phone or email or (first_name and last_name)
     def alias_match(match_type: str):
         return f"""
-        insert into temp_donations
+        insert into {TEMP_DONATIONS_TABLE}
         select null ,
             rbd.id ,
             max(rbd.issue_date) , -- aggregation req b/c GROUP BY below
@@ -39,18 +47,18 @@ def ingest_data(df: pd.DataFrame, conn):
             null ,
             max(case when rbd.trans_type = 'SALE' then rbd.amount else -rbd.amount end) , -- GROSS NET USD when not 'SALE' use neg amt
             '{match_type}'
-        from raw_bluepay_data rbd
-        LEFT JOIN donations d
+        from {BLUEPAY_RAW_TABLE_NAME} rbd
+        LEFT JOIN {DONATIONS_TABLE} d
             ON (rbd.id = d.source_trans_id
             AND d.trans_source_id_fk = 1) 
             OR ('B' || rbd.id = d.source_trans_id 
             AND d.trans_source_id_fk = 4)
-        LEFT JOIN aliases a 
+        LEFT JOIN {ALIASES_TABLE} a 
             ON rbd.phone COLLATE NOCASE = a.alias_phone COLLATE NOCASE -- COLLATE NOCASE is the syntax for ignoring case
             OR rbd.email COLLATE NOCASE = a.alias_email COLLATE NOCASE
             OR (rbd.name1 COLLATE NOCASE = a.alias_first_name COLLATE NOCASE and
             rbd.name2 COLLATE NOCASE = a.alias_last_name COLLATE NOCASE)
-        LEFT JOIN temp_donations td
+        LEFT JOIN {TEMP_DONATIONS_TABLE} td
             ON (rbd.id = td.source_trans_id -- first time called, this does noting.  second time around, this ignores transactions already in td
             AND td.trans_source_id_fk = 1) 
             OR ('B' || rbd.id = td.source_trans_id 
@@ -64,8 +72,8 @@ def ingest_data(df: pd.DataFrame, conn):
         GROUP BY rbd.id -- we group b/c a donation will match with multiple aliases
         """
 
-    new_donors = """
-    insert into temp_donors
+    new_donors = f"""
+    insert into {TEMP_DONORS_TABLE}
     select NULL ,
         max(rbd.name1) || ' ' || max(rbd.name2) ,
         max(rbd.name2) ,
@@ -75,13 +83,13 @@ def ingest_data(df: pd.DataFrame, conn):
         rbd.phone , 
         rbd.email,
         NULL 
-    from raw_bluepay_data rbd
-    left join donations d
+    from {BLUEPAY_RAW_TABLE_NAME} rbd
+    left join {DONATIONS_TABLE} d
         ON (rbd.id = d.source_trans_id
         AND d.trans_source_id_fk = 1) 
         OR ('B' || rbd.id = d.source_trans_id 
         AND d.trans_source_id_fk = 4)
-    left join temp_donations td
+    left join {TEMP_DONATIONS_TABLE} td
         ON (rbd.id = td.source_trans_id -- first time called, this does noting.  second time around, this ignores transactions already in td
         AND td.trans_source_id_fk = 1) 
         OR ('B' || rbd.id = td.source_trans_id 
@@ -95,13 +103,13 @@ def ingest_data(df: pd.DataFrame, conn):
         rbd.email ,
         rbd.phone """
     
-    new_prev_max_id_query = """
-    update temp_donors set prev_max_id = (
-        select max(donor_id_pk) from donors)
+    new_prev_max_id_query = f"""
+    update {TEMP_DONORS_TABLE} set prev_max_id = (
+        select max(donor_id_pk) from {DONORS_TABLE})
     """
 
-    new_aliases_for_new_donors = """
-        insert into temp_aliases
+    new_aliases_for_new_donors = f"""
+        insert into {TEMP_ALIASES_TABLE}
         select distinct null ,
             d.donor_id_pk ,
             rbd.name1 ,
@@ -115,12 +123,12 @@ def ingest_data(df: pd.DataFrame, conn):
             '' ,
             rbd.name2 ,
             rbd.state
-        from temp_donors td
-        left join raw_bluepay_data rbd
+        from {TEMP_DONORS_TABLE} td
+        left join {BLUEPAY_RAW_TABLE_NAME} rbd
         on
             rbd.phone = td.matched_phone and
             rbd.email = td.matched_email 
-        left join donors d
+        left join {DONORS_TABLE} d
         on
             td.donor_first_name = d.donor_first_name and
             td.donor_last_name = d.donor_last_name and
@@ -141,7 +149,7 @@ def ingest_data(df: pd.DataFrame, conn):
     cursor.execute(alias_match('alias match'))
     cursor.execute(new_donors)
     cursor.execute(new_prev_max_id_query)
-    udb.push_temp_table_to_live("temp_donors", "donors", [
+    udb.push_temp_table_to_live(TEMP_DONORS_TABLE, DONORS_TABLE, [
             "NULL",
             "donor_reporting_name",
             "donor_last_name",
@@ -149,18 +157,27 @@ def ingest_data(df: pd.DataFrame, conn):
             "donor_middle_name",
             "donor_class_year"], conn)
     cursor.execute(new_aliases_for_new_donors)
-    udb.push_temp_table_to_live("temp_aliases", "aliases", ["*"], conn)
+    udb.push_temp_table_to_live(TEMP_ALIASES_TABLE, ALIASES_TABLE, ["*"], conn)
     cursor.execute(alias_match('new donor'))
-    udb.push_temp_table_to_live("temp_donations", "donations", 
+    udb.push_temp_table_to_live(TEMP_DONATIONS_TABLE, DONATIONS_TABLE, 
                                 ["my_trans_id_pk", "source_trans_id", "date_time", "alias_id_fk", "trans_source_id_fk", "donation_currrency",
                                  "donation_gross_amt", "fee_currency", "fee_amt", "conversion_rate", "donation_gross_USD", "fee_USD", "donation_net_USD"],
                                  conn)
 
-    data_donors = pd.read_sql_query("SELECT * FROM temp_donors", conn)
-    data_aliases = pd.read_sql_query("SELECT * FROM temp_aliases", conn)
-    data_donations = pd.read_sql_query("SELECT * FROM temp_donations", conn)
+    data_donors = pd.read_sql_query(
+        f"SELECT * FROM {TEMP_DONORS_TABLE}",
+        conn,
+    )
+    data_aliases = pd.read_sql_query(
+        f"SELECT * FROM {TEMP_ALIASES_TABLE}",
+        conn,
+    )
+    data_donations = pd.read_sql_query(
+        f"SELECT * FROM {TEMP_DONATIONS_TABLE}",
+        conn,
+    )
 
-    validation_dict = val.validate_bluepay(conn, "raw_bluepay_data" , "id")
+    validation_dict = val.validate_bluepay(conn)
 
     return {'temp_donations':data_donations, 
             'temp_donors':data_donors, 

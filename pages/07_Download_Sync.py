@@ -4,9 +4,9 @@ import app_context as ctx
 
 
 def main():
-    st.title("SQLite Database Editor")
+    st.title("Database Sync")
     ctx.render_backup_warning()
-    st.write("Use the pages in the sidebar to navigate database operations.")
+    st.write("Use the sidebar controls to download or sync the database with Google Drive.")
 
     conn = ctx.get_db_connection()
     sync_clicked = ctx.render_drive_sidebar(conn)
@@ -14,9 +14,10 @@ def main():
         st.stop()
 
     if conn is None:
-        st.info("Download the database to enable the other pages.")
+        st.info("Download the database to enable other pages.")
     else:
         st.success("Database file is ready.")
+
 
 if __name__ == "__main__":
     main()
