@@ -20,8 +20,16 @@ def main():
     if conn is None:
         st.stop()
 
-    st.dataframe(udb.get_latest_transaction(conn))
-    payment_processor = st.radio(
+    latest_df = udb.get_latest_transaction(conn)
+    latest_df = latest_df.rename(
+        columns={
+            "source_name": "Source",
+            "MAX(d.date_time)": "Latest Transaction",
+        }
+    )
+    latest_df = latest_df[["Source", "Latest Transaction"]]
+    st.dataframe(latest_df)
+    payment_processor = st.selectbox(
         "What source is the file?",
         ["Bluepay / Clover", "Paypal", "CardPointe"],
     )
@@ -39,8 +47,8 @@ def main():
                 },
                 keep_default_na=False,
             )
-            st.text("raw_data")
-            st.dataframe(df)
+            with st.expander("Uploaded CSV", expanded=False):
+                st.dataframe(df)
             if payment_processor == "Bluepay / Clover":
                 results_dict = bi.ingest_data(df, conn)
             elif payment_processor == "Paypal":
@@ -56,14 +64,23 @@ def main():
             staged_donors = results_dict["temp_donors"]
             staged_aliases = results_dict["temp_aliases"]
             validation_dict = results_dict["validation_dict"]
-            st.text("temp_raw_data")
-            st.dataframe(temp_raw_data)
-            st.text("temp_donations")
-            st.dataframe(staged_data)
-            st.text("staged_donors")
-            st.dataframe(staged_donors)
-            st.text("staged_aliases")
-            st.dataframe(staged_aliases)
+            with st.expander("Raw Data Preview", expanded=False):
+                st.dataframe(temp_raw_data)
+            staged_donations_label = "Staged Donations"
+            if staged_data.empty:
+                staged_donations_label += " (empty)"
+            with st.expander(staged_donations_label, expanded=False):
+                st.dataframe(staged_data)
+            staged_donors_label = "Staged Donors"
+            if staged_donors.empty:
+                staged_donors_label += " (empty)"
+            with st.expander(staged_donors_label, expanded=False):
+                st.dataframe(staged_donors)
+            staged_aliases_label = "Staged Aliases"
+            if staged_aliases.empty:
+                staged_aliases_label += " (empty)"
+            with st.expander(staged_aliases_label, expanded=False):
+                st.dataframe(staged_aliases)
 
             vd.display(validation_dict)
             st.text("How do you want to proceed?")

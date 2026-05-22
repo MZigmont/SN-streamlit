@@ -1,6 +1,6 @@
 CREATE TABLE aliases(
 alias_id_pk integer primary key autoincrement,
-donor_id_fk int,--foreign key
+donor_id_fk int NOT NULL,--foreign key
 alias_first_name text,
 alias_email text,
 alias_phone text,
