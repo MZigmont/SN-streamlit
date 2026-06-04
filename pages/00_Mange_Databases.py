@@ -326,7 +326,8 @@ def main():
                 file_table = file_details.get(table_name)
                 if active_table == file_table:
                     continue
-                with st.expander(f"Schema diff: {table_name}", expanded=False):
+                with st.container(border=True):
+                    st.markdown(f"**Schema diff: `{table_name}`**")
                     if not active_table:
                         st.error("Table missing in database.")
                     if not file_table:
