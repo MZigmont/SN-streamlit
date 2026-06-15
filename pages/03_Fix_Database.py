@@ -294,6 +294,122 @@ def main():
         f"SELECT * FROM {constants.DONORS_TABLE} ORDER BY donor_reporting_name, donor_class_year",
         conn,
     )
+
+    edit_donor_label = "Edit donor datapoint"
+    if actions_enabled:
+        with st.expander(edit_donor_label, expanded=False):
+            if donors_df.empty:
+                st.info("No donors found.")
+            else:
+                donor_table_info = pd.read_sql_query(
+                    f"PRAGMA table_info({constants.DONORS_TABLE});",
+                    conn,
+                )
+                editable_fields = donor_table_info[
+                    donor_table_info["name"] != "donor_id_pk"
+                ]
+                donor_options = list(donors_df.index)
+                selected_edit_index = st.selectbox(
+                    "Donor",
+                    options=donor_options,
+                    format_func=lambda i: (
+                        f"{donors_df.loc[i, 'donor_reporting_name']} "
+                        f"({donors_df.loc[i, 'donor_class_year']}) "
+                        f"- ID {donors_df.loc[i, 'donor_id_pk']}"
+                    ),
+                    key="edit_donor",
+                    disabled=not st.session_state["db_ops_enabled"],
+                )
+                selected_donor_id = int(donors_df.loc[selected_edit_index, "donor_id_pk"])
+                selected_donor_row = donors_df[
+                    donors_df["donor_id_pk"] == selected_donor_id
+                ]
+
+                st.write("### Current donor row")
+                st.dataframe(selected_donor_row)
+
+                field_options = list(editable_fields["name"])
+                selected_field = st.selectbox(
+                    "Field to edit",
+                    options=field_options,
+                    key="edit_donor_field",
+                    disabled=not st.session_state["db_ops_enabled"],
+                )
+                selected_field_info = editable_fields[
+                    editable_fields["name"] == selected_field
+                ].iloc[0]
+                field_type = (selected_field_info["type"] or "").lower()
+                field_required = selected_field_info["notnull"] == 1
+                current_value = selected_donor_row.iloc[0][selected_field]
+                if pd.isna(current_value):
+                    current_display = ""
+                elif "int" in field_type:
+                    current_display = str(int(current_value))
+                else:
+                    current_display = str(current_value)
+                edit_input_key = f"edit_donor_{selected_donor_id}_{selected_field}"
+
+                with st.form("edit_donor_datapoint_form"):
+                    st.text_input(
+                        "Current value",
+                        value=current_display,
+                        key=f"{edit_input_key}_current",
+                        disabled=True,
+                    )
+                    new_value_input = st.text_input(
+                        "New value",
+                        value=current_display,
+                        key=f"{edit_input_key}_new",
+                        help="Leave blank to store NULL when the field allows it.",
+                        disabled=not st.session_state["db_ops_enabled"],
+                    )
+                    submitted_edit = st.form_submit_button(
+                        "Update donor datapoint",
+                        disabled=not st.session_state["db_ops_enabled"],
+                    )
+
+                if submitted_edit:
+                    new_value = new_value_input.strip()
+                    if new_value == "":
+                        if field_required:
+                            st.error(f"{selected_field} is required.")
+                        else:
+                            conn.execute(
+                                f"""
+                                UPDATE {constants.DONORS_TABLE}
+                                SET {selected_field} = NULL
+                                WHERE donor_id_pk = ?
+                                """,
+                                (selected_donor_id,),
+                            )
+                            conn.commit()
+                            st.success("Donor datapoint updated.")
+                            st.info("Refresh the page to continue making database changes.")
+                            st.session_state["db_ops_enabled"] = False
+                    else:
+                        try:
+                            if "int" in field_type:
+                                parsed_value = int(new_value)
+                            else:
+                                parsed_value = new_value
+                        except ValueError:
+                            st.error(f"Invalid value for {selected_field}. Enter a whole number.")
+                        else:
+                            conn.execute(
+                                f"""
+                                UPDATE {constants.DONORS_TABLE}
+                                SET {selected_field} = ?
+                                WHERE donor_id_pk = ?
+                                """,
+                                (parsed_value, selected_donor_id),
+                            )
+                            conn.commit()
+                            st.success("Donor datapoint updated.")
+                            st.info("Refresh the page to continue making database changes.")
+                            st.session_state["db_ops_enabled"] = False
+    else:
+        st.write(f"{edit_donor_label} (refresh required)")
+
     merge_label = "Merge donors"
     if actions_enabled:
         with st.expander(merge_label, expanded=False):
