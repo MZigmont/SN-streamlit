@@ -295,6 +295,104 @@ def main():
         conn,
     )
 
+    manual_alias_label = "Add manual alias"
+    if actions_enabled:
+        with st.expander(manual_alias_label, expanded=False):
+            if donors_df.empty:
+                st.info("No donors found.")
+            else:
+                donor_options = list(donors_df.index)
+                selected_alias_donor_index = st.selectbox(
+                    "Donor for new alias",
+                    options=donor_options,
+                    format_func=lambda i: (
+                        f"{donors_df.loc[i, 'donor_reporting_name']} "
+                        f"({donors_df.loc[i, 'donor_class_year']}) "
+                        f"- ID {donors_df.loc[i, 'donor_id_pk']}"
+                    ),
+                    key="manual_alias_donor",
+                    disabled=not st.session_state["db_ops_enabled"],
+                )
+                alias_donor_id = int(
+                    donors_df.loc[selected_alias_donor_index, "donor_id_pk"]
+                )
+                selected_alias_donor = donors_df[
+                    donors_df["donor_id_pk"] == alias_donor_id
+                ]
+
+                st.write("### Selected donor")
+                st.dataframe(selected_alias_donor)
+
+                existing_aliases = pd.read_sql_query(
+                    f"""
+                    SELECT *
+                    FROM {constants.ALIASES_TABLE}
+                    WHERE donor_id_fk = ?
+                    ORDER BY alias_id_pk
+                    """,
+                    conn,
+                    params=(alias_donor_id,),
+                )
+                st.write("### Existing aliases")
+                if existing_aliases.empty:
+                    st.info("No aliases found for this donor.")
+                else:
+                    st.dataframe(existing_aliases)
+
+                alias_table_info = pd.read_sql_query(
+                    f"PRAGMA table_info({constants.ALIASES_TABLE});",
+                    conn,
+                )
+                manual_alias_fields = alias_table_info[
+                    ~alias_table_info["name"].isin(["alias_id_pk", "donor_id_fk"])
+                ]
+
+                with st.form("manual_alias_form"):
+                    alias_payload = {}
+                    for _, row in manual_alias_fields.iterrows():
+                        col_name = row["name"]
+                        alias_payload[col_name] = st.text_input(
+                            col_name,
+                            key=f"manual_alias_{col_name}",
+                            disabled=not st.session_state["db_ops_enabled"],
+                        )
+                    submitted_alias = st.form_submit_button(
+                        "Add alias",
+                        disabled=not st.session_state["db_ops_enabled"],
+                    )
+
+                if submitted_alias:
+                    cleaned_payload = {
+                        col_name: value.strip() or None
+                        for col_name, value in alias_payload.items()
+                    }
+                    has_alias_detail = any(
+                        value is not None for value in cleaned_payload.values()
+                    )
+                    if not has_alias_detail:
+                        st.error("Enter at least one alias field before saving.")
+                    else:
+                        alias_columns = ["donor_id_fk"] + list(cleaned_payload.keys())
+                        alias_values = [
+                            alias_donor_id,
+                            *[cleaned_payload[col] for col in cleaned_payload],
+                        ]
+                        placeholders = ",".join(["?"] * len(alias_columns))
+                        conn.execute(
+                            f"""
+                            INSERT INTO {constants.ALIASES_TABLE}
+                            ({", ".join(alias_columns)})
+                            VALUES ({placeholders})
+                            """,
+                            alias_values,
+                        )
+                        conn.commit()
+                        st.success("Manual alias added.")
+                        st.info("Refresh the page to continue making database changes.")
+                        st.session_state["db_ops_enabled"] = False
+    else:
+        st.write(f"{manual_alias_label} (refresh required)")
+
     edit_donor_label = "Edit donor datapoint"
     if actions_enabled:
         with st.expander(edit_donor_label, expanded=False):
