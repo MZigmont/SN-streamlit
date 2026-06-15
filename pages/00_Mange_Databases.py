@@ -1,6 +1,7 @@
 import os
 import shutil
 import sqlite3
+from contextlib import closing
 from datetime import datetime
 
 import streamlit as st
@@ -96,7 +97,7 @@ def main():
         return details
 
     def _schema_details_from_files():
-        with sqlite3.connect(":memory:") as temp_conn:
+        with closing(sqlite3.connect(":memory:")) as temp_conn:
             temp_conn.execute("PRAGMA foreign_keys = ON;")
             for file_name in schema_files:
                 sql_path = os.path.join("schema_sql", file_name)
@@ -132,44 +133,48 @@ def main():
         temp_path = f"{db_path}.rebuild"
         if os.path.exists(temp_path):
             os.remove(temp_path)
-        with sqlite3.connect(temp_path) as new_conn:
+        with closing(sqlite3.connect(temp_path)) as new_conn:
             new_conn.execute("PRAGMA foreign_keys = ON;")
-            for file_name in schema_files:
-                sql_path = os.path.join("schema_sql", file_name)
-                with open(sql_path, "r", encoding="utf-8") as sql_file:
-                    new_conn.executescript(sql_file.read())
+            try:
+                for file_name in schema_files:
+                    sql_path = os.path.join("schema_sql", file_name)
+                    with open(sql_path, "r", encoding="utf-8") as sql_file:
+                        new_conn.executescript(sql_file.read())
 
-            if migrate_data:
-                with sqlite3.connect(db_path) as old_conn:
-                    old_conn.execute("PRAGMA foreign_keys = ON;")
-                    for table_name in [os.path.splitext(f)[0] for f in schema_files]:
-                        old_cols = [
-                            row[1]
-                            for row in old_conn.execute(
-                                f"PRAGMA table_info({table_name});"
+                if migrate_data:
+                    with closing(sqlite3.connect(db_path)) as old_conn:
+                        old_conn.execute("PRAGMA foreign_keys = ON;")
+                        for table_name in [os.path.splitext(f)[0] for f in schema_files]:
+                            old_cols = [
+                                row[1]
+                                for row in old_conn.execute(
+                                    f"PRAGMA table_info({table_name});"
+                                ).fetchall()
+                            ]
+                            new_cols = [
+                                row[1]
+                                for row in new_conn.execute(
+                                    f"PRAGMA table_info({table_name});"
+                                ).fetchall()
+                            ]
+                            shared_cols = [col for col in old_cols if col in new_cols]
+                            if not shared_cols:
+                                raise ValueError(f"No shared columns for {table_name}")
+                            col_list = ", ".join(shared_cols)
+                            placeholders = ", ".join(["?"] * len(shared_cols))
+                            rows = old_conn.execute(
+                                f"SELECT {col_list} FROM {table_name};"
                             ).fetchall()
-                        ]
-                        new_cols = [
-                            row[1]
-                            for row in new_conn.execute(
-                                f"PRAGMA table_info({table_name});"
-                            ).fetchall()
-                        ]
-                        shared_cols = [col for col in old_cols if col in new_cols]
-                        if not shared_cols:
-                            raise ValueError(f"No shared columns for {table_name}")
-                        col_list = ", ".join(shared_cols)
-                        placeholders = ", ".join(["?"] * len(shared_cols))
-                        rows = old_conn.execute(
-                            f"SELECT {col_list} FROM {table_name};"
-                        ).fetchall()
-                        new_conn.execute(f"DELETE FROM {table_name};")
-                        if rows:
-                            new_conn.executemany(
-                                f"INSERT INTO {table_name} ({col_list}) VALUES ({placeholders});",
-                                rows,
-                            )
-            new_conn.commit()
+                            new_conn.execute(f"DELETE FROM {table_name};")
+                            if rows:
+                                new_conn.executemany(
+                                    f"INSERT INTO {table_name} ({col_list}) VALUES ({placeholders});",
+                                    rows,
+                                )
+                new_conn.commit()
+            except Exception:
+                new_conn.rollback()
+                raise
 
         os.replace(temp_path, db_path)
 
@@ -302,7 +307,7 @@ def main():
             finally:
                 conn.close()
 
-    with sqlite3.connect(current_path) as active_conn:
+    with closing(sqlite3.connect(current_path)) as active_conn:
         active_schema = {
             name: sql
             for name, sql in _load_db_schema(active_conn).items()
