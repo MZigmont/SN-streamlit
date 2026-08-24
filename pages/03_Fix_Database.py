@@ -17,7 +17,7 @@ def main():
     actions_enabled = st.session_state["db_ops_enabled"]
 
     conn = ctx.get_db_connection()
-    sync_clicked = ctx.render_drive_sidebar(conn)
+    sync_clicked = ctx.render_drive_sidebar(conn, current_page="fix_database")
     if sync_clicked:
         st.stop()
     if conn is None:

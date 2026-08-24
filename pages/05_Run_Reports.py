@@ -8,10 +8,19 @@ import reports
 
 def main():
     st.title("Run Reports")
+
+    with st.expander("Run Reports Instructions", expanded=False):
+        st.markdown(
+            """
+            1. Select date range for your reports and click run button
+            2. Download excel file with results
+            """
+        )
+
     ctx.render_backup_warning()
 
     conn = ctx.get_db_connection()
-    sync_clicked = ctx.render_drive_sidebar(conn)
+    sync_clicked = ctx.render_drive_sidebar(conn, current_page="run_reports")
     if sync_clicked:
         st.stop()
     if conn is None:

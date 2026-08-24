@@ -15,7 +15,7 @@ def main():
         st.info("Refresh the page to continue making database changes.")
 
     conn = ctx.get_db_connection()
-    sync_clicked = ctx.render_drive_sidebar(conn)
+    sync_clicked = ctx.render_drive_sidebar(conn, current_page="manage_backup_tables")
     if sync_clicked:
         st.stop()
     if conn is None:

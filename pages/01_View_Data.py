@@ -9,7 +9,7 @@ def main():
     ctx.render_backup_warning()
 
     conn = ctx.get_db_connection()
-    sync_clicked = ctx.render_drive_sidebar(conn)
+    sync_clicked = ctx.render_drive_sidebar(conn, current_page="view_data")
     if sync_clicked:
         st.stop()
     if conn is None:

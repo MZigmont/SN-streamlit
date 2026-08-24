@@ -11,10 +11,64 @@ import validation_display as vd
 
 def main():
     st.title("Ingest Data")
+    with st.expander("General Instructions", expanded=False):
+        st.markdown(
+            """
+            1. Goto Credit Card Processor
+            2. Retrieve relevant data
+            3. Save data locally for upload into database
+            4. Upload and Commit the data if everything looks correct, or cancel to roll back the import
+            """
+        )
+    with st.expander("BluePay Instructions", expanded=False):
+        st.markdown(
+            """
+            1. Download data from BluePay (rebranded as Clover) and PayPal and save to drive 
+            2. (IF NEED NEW DATA)
+
+                a. BluePay URL as of 8/12/2021 https://secure.bluepay.com/
+            3. Go To Processing -> Transactions -> Transaction Search
+            4. Transaction Search
+
+                a. from date should be equal to or just before date of last download (overlapping transaction data is fine, a hole in the transaction history is not)
+                
+                b. Sort by Date
+                
+                c. Download CSV file w/ Column Headers (HAVING COLUMN HEADERS IS IMPORTANT)
+            """
+        )
+    with st.expander("PayPal Instructions", expanded=False):
+        st.markdown(
+            """
+            1. PayPal URL as of 8/12/2021 https://www.paypal.com/us/signin
+
+                a. Activity -> All Reports -> Activities -> Activity report
+                
+                b. Balance Affecting transactions
+                
+                c. from date should be equal to or just before date of last download (overlapping transaction data is fine, a hole in the transaction history is not)
+
+                d. CSV format
+            """
+        )
+    with st.expander("CardPointe Instructions", expanded=False):
+        st.markdown(
+            """
+            1. CardPointe URL as of 7/6/2026 https://www.cardconnect.com/cardpointe/
+
+                a. Reporting -> Choose Columns -> Select All
+                
+                b. Select Date range
+                
+                c. Export as .csv
+            """
+        )
+
     ctx.render_backup_warning()
 
+
     conn = ctx.get_db_connection()
-    sync_clicked = ctx.render_drive_sidebar(conn)
+    sync_clicked = ctx.render_drive_sidebar(conn, current_page="ingest_data")
     if sync_clicked:
         st.stop()
     if conn is None:

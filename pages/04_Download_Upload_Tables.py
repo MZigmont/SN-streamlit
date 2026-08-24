@@ -17,7 +17,7 @@ def main():
         st.session_state["button_enabled"] = True
 
     conn = ctx.get_db_connection()
-    sync_clicked = ctx.render_drive_sidebar(conn)
+    sync_clicked = ctx.render_drive_sidebar(conn, current_page="download_upload_tables")
     if sync_clicked:
         st.stop()
     if conn is None:

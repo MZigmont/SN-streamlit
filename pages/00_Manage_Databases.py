@@ -19,7 +19,7 @@ def main():
     db_files = ctx.list_db_files()
     if not db_files:
         st.info("No .db files found in the db/ folder.")
-        ctx.render_drive_sidebar()
+        ctx.render_drive_sidebar(current_page="manage_databases")
         return
 
     current_path = ctx.get_selected_db_path()
@@ -421,7 +421,7 @@ def main():
                         st.info("Refresh the page to do another backup create/restore.")
                         st.session_state["db_ops_enabled"] = False
 
-    ctx.render_drive_sidebar()
+    ctx.render_drive_sidebar(current_page="manage_databases")
 
 
 if __name__ == "__main__":

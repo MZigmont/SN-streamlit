@@ -9,7 +9,7 @@ def main():
     st.write("Use the sidebar controls to download or sync the database with Google Drive.")
 
     conn = ctx.get_db_connection()
-    sync_clicked = ctx.render_drive_sidebar(conn)
+    sync_clicked = ctx.render_drive_sidebar(conn, current_page="download_sync")
     if sync_clicked:
         st.stop()
 
