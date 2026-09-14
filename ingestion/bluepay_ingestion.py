@@ -23,11 +23,20 @@ from constants import (
 )
 
 def ingest_data(df: pd.DataFrame, conn):
+    df['issue_date'] = pd.to_datetime(df['issue_date'], format='mixed')
+
+    for column_name in ["amount"]:
+        df[column_name] = pd.to_numeric(
+            df[column_name]
+                .astype("string")
+                .str.replace(r"[$,]", "", regex=True)
+                .str.strip(),
+            errors="coerce",
+            )
+
     df.to_sql(BLUEPAY_RAW_TABLE_NAME, conn, if_exists='replace', index=False)
     cursor = conn.cursor()
     udb.create_staging_tables(cursor)
-
-    df['issue_date'] = pd.to_datetime(df['issue_date'], format='mixed')
 
     # alias match is on phone or email or (first_name and last_name)
     def alias_match(match_type: str):

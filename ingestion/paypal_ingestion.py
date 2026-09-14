@@ -35,6 +35,15 @@ def ingest_data(df: pd.DataFrame, conn):
     df['my_last_name']   = parts.str[-1]
     df['my_middle_name'] = parts.str[1:-1].str.join(' ')
 
+    for column_name in ["gross","net","fee"]:
+        df[column_name] = pd.to_numeric(
+            df[column_name]
+                .astype("string")
+                .str.replace(r"[$,]", "", regex=True)
+                .str.strip(),
+            errors="coerce",
+            )
+
     df.to_sql(PAYPAL_RAW_TABLE_NAME, conn, if_exists='replace', index=False)
     cursor = conn.cursor()
     udb.create_staging_tables(cursor)
