@@ -2,6 +2,7 @@ import pandas as pd
 import streamlit as st
 
 import app_context as ctx
+from authentication import require_admin
 import backups
 
 
@@ -10,6 +11,7 @@ def on_click():
 
 
 def main():
+    require_admin()
     st.title("Download / Upload Tables")
     ctx.render_backup_warning()
 

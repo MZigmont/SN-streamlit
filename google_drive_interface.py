@@ -12,7 +12,7 @@ SCOPES = ["https://www.googleapis.com/auth/drive"]
 
 
 def google_drive_auth():
-    """Authenticate with Google Drive API and return a Drive service client."""
+    """Authenticate with Google Drive using Streamlit secrets and a cached token."""
     creds = None
     if os.path.exists("token.json"):
         creds = Credentials.from_authorized_user_file("token.json", SCOPES)
@@ -20,7 +20,17 @@ def google_drive_auth():
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
         else:
-            flow = InstalledAppFlow.from_client_secrets_file("credentials.json", SCOPES)
+            drive_secrets = st.secrets["google_drive"]
+            client_config = {
+                "installed": {
+                    "client_id": drive_secrets["client_id"],
+                    "client_secret": drive_secrets["client_secret"],
+                    "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                    "token_uri": "https://oauth2.googleapis.com/token",
+                    "redirect_uris": ["http://localhost"],
+                }
+            }
+            flow = InstalledAppFlow.from_client_config(client_config, SCOPES)
             creds = flow.run_local_server(port=0)
         with open("token.json", "w") as token:
             token.write(creds.to_json())

@@ -2,6 +2,7 @@ import pandas as pd
 import streamlit as st
 
 import app_context as ctx
+from authentication import require_admin
 import ingestion.bluepay_ingestion as bi
 import ingestion.paypal_ingestion as pi
 import ingestion.cardpointe_ingestion as ci
@@ -10,6 +11,7 @@ import validation_display as vd
 
 
 def main():
+    require_admin()
     st.title("Ingest Data")
     with st.expander("General Instructions", expanded=False):
         st.markdown(

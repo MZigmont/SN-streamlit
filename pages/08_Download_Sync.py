@@ -1,9 +1,11 @@
 import streamlit as st
 
 import app_context as ctx
+from authentication import require_admin
 
 
 def main():
+    require_admin()
     st.title("Database Sync")
     ctx.render_backup_warning()
     st.write("Use the sidebar controls to download or sync the database with Google Drive.")

@@ -10,6 +10,7 @@ import pandas as pd
 import streamlit as st
 
 import app_context as ctx
+from authentication import require_admin
 import constants
 
 
@@ -317,6 +318,7 @@ def _send_messages(
 
 
 def main() -> None:
+    require_admin()
     st.title("Send Emails to Sigma Nu Donors")
 
     with st.expander("Send Emails Instructions", expanded=False):

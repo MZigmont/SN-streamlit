@@ -1,9 +1,11 @@
 import streamlit as st
 
 import app_context as ctx
+from authentication import require_admin
 
 
 def main():
+    require_admin()
     st.title("Sigma Nu Donations Database Tool")
     ctx.render_backup_warning()
     st.write("Use this website to manage the Sigma Nu donations database.")

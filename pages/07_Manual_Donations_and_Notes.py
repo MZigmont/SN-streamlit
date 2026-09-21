@@ -4,10 +4,12 @@ import pandas as pd
 import streamlit as st
 
 import app_context as ctx
+from authentication import require_admin
 import constants
 
 
 def main():
+    require_admin()
     st.title("Manual Donations and Notes")
     ctx.render_backup_warning()
 

@@ -3,10 +3,12 @@ from datetime import date
 import streamlit as st
 
 import app_context as ctx
+from authentication import require_admin
 import reports
 
 
 def main():
+    require_admin()
     st.title("Run Reports")
 
     with st.expander("Run Reports Instructions", expanded=False):
