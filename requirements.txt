@@ -30,7 +30,7 @@ narwhals==2.21.2
 numpy==2.4.6
 oauthlib==3.3.1
 openpyxl==3.1.5
-packaging @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_packaging_1777103621/work
+packaging
 pandas==3.0.3
 pillow==12.2.0
 proto-plus==1.28.0
