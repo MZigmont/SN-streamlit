@@ -3,7 +3,7 @@
 import streamlit as st
 
 
-def require_admin():
+def require_admin(render_sidebar=True):
     """Stop the page before accessing data unless a verified user is approved."""
     try:
         approved = st.secrets.get("access", {}).get("approved_emails", [])
@@ -36,6 +36,9 @@ def require_admin():
         if st.button("Sign out"):
             st.logout()
         st.stop()
+
+    if not render_sidebar:
+        return
 
     st.sidebar.caption(f"Administrator: {email}")
     if st.sidebar.button("Sign out"):

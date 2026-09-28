@@ -122,7 +122,6 @@ def get_db_connection():
     return sqlite3.connect(db_path)
 
 
-@st.cache_resource
 def get_drive_service():
     return google_drive_auth()
 
