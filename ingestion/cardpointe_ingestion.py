@@ -105,9 +105,9 @@ def ingest_data(df: pd.DataFrame, conn):
             AND d.trans_source_id_fk = 1)
     LEFT join {TEMP_DONATIONS_TABLE} td
         ON (rcd.transaction_num = td.source_trans_id
-        AND d.trans_source_id_fk = 4) 
+        AND td.trans_source_id_fk = 4)
         OR (rcd.transaction_num = 'B' || td.source_trans_id 
-        AND d.trans_source_id_fk = 1)
+        AND td.trans_source_id_fk = 1)
     where d.source_trans_id is NULL and 
         td.source_trans_id is NULL and
         rcd.method in ('SALE') and
