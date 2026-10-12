@@ -3,4 +3,4 @@
 
 
 
-8/31/26 - publish webpage to internet and protect
+9/28/2026 - run through an update of donations on public website to see if everything works
