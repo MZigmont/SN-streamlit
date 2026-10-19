@@ -615,4 +615,6 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    require_admin(render_sidebar=False)
+    with ctx.database_change_warning():
+        main()

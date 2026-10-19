@@ -1,9 +1,11 @@
 import os
 import sqlite3
+from contextlib import contextmanager
 
 import streamlit as st
 
 from google_drive_interface import google_drive_auth, download_db_file, upload_db_file
+from database_sync import has_unsynced_changes
 
 DB_DIR = "db"
 DB_FILE_NAME = "db/sigma_nu_donations.db"
@@ -87,6 +89,32 @@ def list_db_files():
     )
 
 
+@contextmanager
+def database_change_warning():
+    """Refresh the shared warning even when an action stops or reruns a page."""
+    warning = st.empty()
+
+    def refresh():
+        changed = [name for name in list_db_files()
+                   if "backup" not in name.lower() or name == os.path.basename(get_selected_db_path())
+                   if has_unsynced_changes(os.path.join(DB_DIR, name))]
+        if changed:
+            warning.warning(
+                "## Make sure you sync before you leave.\n\n"
+                "Local database changes have not been synced with Google Drive: "
+                + ", ".join(changed)
+                + ". Use **Sync Database with Google Drive** for each changed database."
+            )
+        else:
+            warning.empty()
+
+    refresh()
+    try:
+        yield
+    finally:
+        refresh()
+
+
 def get_default_db_path():
     available = list_db_files()
     if available:
@@ -142,7 +170,11 @@ def render_drive_sidebar(conn=None, current_page=None):
     db_path = get_selected_db_path()
 
     if st.sidebar.button("Download Database from Google Drive"):
+        if conn is not None:
+            conn.close()
         download_db_file(service, FILE_ID, db_path)
+        # The page must not continue using its now-closed database connection.
+        return True
 
     sync_disabled = conn is None
     if st.sidebar.button("Sync Database with Google Drive", disabled=sync_disabled):

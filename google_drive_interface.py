@@ -9,6 +9,7 @@ from googleapiclient.errors import HttpError
 
 from authentication import require_admin
 from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
+from database_sync import fingerprint, mark_synced
 
 def _reconnect_drive():
     st.warning("Google Drive authorization is missing or expired. Sign in again to reconnect.")
@@ -33,6 +34,11 @@ def _handle_drive_error(error, action):
         st.rerun()
     elif isinstance(error, HttpError) and error.resp.status == 403:
         st.error("Google Drive denied access. Grant Drive permission at sign-in and check that your account is an Editor of the database file.")
+    elif isinstance(error, PermissionError):
+        st.error(
+            f"Could not {action} the local database because the file is in use or its folder is not writable. "
+            "Close other programs using the database and check the local folder permissions, then try again."
+        )
     else:
         st.error(f"Could not {action} the database. Check the connection and file access, then try again.")
 
@@ -51,19 +57,34 @@ def download_db_file(service, file_id, local_file):
             while not done:
                 _, done = downloader.next_chunk()
         os.replace(temp_path, destination)
-        st.success("Database file downloaded successfully.")
     except Exception as e:
         _handle_drive_error(e, "download")
+    else:
+        _record_sync(local_file, "downloaded")
+        st.success("Database file downloaded successfully.")
     finally:
         if temp_path is not None:
             temp_path.unlink(missing_ok=True)
 
 
+def _record_sync(local_file, action, digest=None):
+    try:
+        mark_synced(local_file, digest)
+    except OSError:
+        st.warning(
+            f"The database was {action} successfully, but its sync status could not be saved locally. "
+            "Check the database folder permissions. The sync reminder may remain visible."
+        )
+
+
 def upload_db_file(service, file_id, local_file):
     """Upload a local file to replace an existing file in Google Drive."""
     try:
+        uploaded_digest = fingerprint(local_file)
         media = MediaFileUpload(local_file, mimetype="application/x-sqlite3", resumable=True)
         service.files().update(fileId=file_id, media_body=media).execute()
-        st.success("Database file updated successfully on Google Drive.")
     except Exception as e:
         _handle_drive_error(e, "upload")
+    else:
+        _record_sync(local_file, "uploaded", uploaded_digest)
+        st.success("Database file updated successfully on Google Drive.")
