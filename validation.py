@@ -17,7 +17,6 @@ import constants
 @dataclass(frozen=True)
 class ValidationQuery:
     short_name: str
-    table_name: str
     query: str
 
     def execute(self, conn: "pd.io.sql.SQLDatabase") -> pd.DataFrame:
@@ -35,20 +34,20 @@ def _run_agnostic(
     return _run_queries(
         conn,
         [
-            NO_DUPES_TRANS_ID,
+            NO_DUPES_TEMP_TRANS_ID,
             raw_data_query,
             NO_DUPES_DONATIONS,
             NO_DUPES_TEMP_DONORS,
             NO_DUPES_DONORS,
             NO_DUPES_TEMP_ALIASES,
             NO_DUPES_ALIASES,
+            # NO_DUPES_DONATIONS_TEMP_LIVE, not currently useful b/c validations are run after staged data is pushed to live
         ],
     )
 
 
-NO_DUPES_TRANS_ID = ValidationQuery(
+NO_DUPES_TEMP_TRANS_ID = ValidationQuery(
     short_name="Duplicate transaction IDs in temp donations",
-    table_name=constants.TEMP_DONATIONS_TABLE,
     query=f"""
         SELECT source_trans_id, COUNT(*) AS count
         FROM {constants.TEMP_DONATIONS_TABLE}
@@ -56,9 +55,25 @@ NO_DUPES_TRANS_ID = ValidationQuery(
         HAVING COUNT(*) > 1""",
 )
 
+NO_DUPES_DONATIONS_TEMP_LIVE = ValidationQuery(
+    short_name="Duplicate transaction IDs in temp versus live donations",
+    query=f"""
+        SELECT td.source_trans_id
+        FROM {constants.TEMP_DONATIONS_TABLE} td
+        INNER JOIN {constants.DONATIONS_TABLE} d
+        ON (td.source_trans_id = d.source_trans_id
+        AND
+        td.trans_source_id_fk = d.trans_source_id_fk)
+        OR ('B' || td.source_trans_id = d.source_trans_id -- assumes temp Bluepay data compared to live Cardpointe data
+            AND d.trans_source_id_fk = 4
+            AND td.trans_source_id_fk = 1 )
+        OR ('B' || d.source_trans_id = td.source_trans_id -- assumes temp Cardpointe data compared to live Bluepay data
+            AND td.trans_source_id_fk = 4
+            AND d.trans_source_id_fk = 1 )
+        """,
+)
 NO_DUPES_DONATIONS = ValidationQuery(
     short_name="Duplicate transaction IDs in donations",
-    table_name=constants.DONATIONS_TABLE,
     query=f"""
         SELECT source_trans_id, source_name, COUNT(*)
         FROM {constants.DONATIONS_TABLE}
@@ -73,7 +88,6 @@ NO_DUPES_DONATIONS = ValidationQuery(
 
 NO_DUPES_TEMP_DONORS = ValidationQuery(
     short_name="Duplicate donor names in temp donors",
-    table_name=constants.TEMP_DONORS_TABLE,
     query=f"""
         SELECT donor_last_name, donor_first_name, COUNT(*)
         FROM {constants.TEMP_DONORS_TABLE}
@@ -83,17 +97,15 @@ NO_DUPES_TEMP_DONORS = ValidationQuery(
 
 NO_DUPES_DONORS = ValidationQuery(
     short_name="Duplicate donors in donors",
-    table_name=constants.DONORS_TABLE,
     query=f"""
-        SELECT donor_reporting_name, donor_class_year, COUNT(*)
+        SELECT donor_reporting_name, GROUP_CONCAT(donor_class_year), COUNT(*)
         FROM {constants.DONORS_TABLE}
-        GROUP BY donor_reporting_name, donor_class_year
+        GROUP BY donor_reporting_name
         HAVING COUNT(*) > 1""",
 )
 
 NO_DUPES_TEMP_ALIASES = ValidationQuery(
     short_name="Duplicate aliases in temp aliases",
-    table_name=constants.TEMP_ALIASES_TABLE,
     query=f"""
         SELECT GROUP_CONCAT(alias_id_pk) AS duplicate_ids, alias_first_name, alias_email, alias_phone, alias_address_1, alias_address_2, alias_city, 
             alias_zip, alias_country, alias_middle_name, alias_last_name, alias_state, COUNT(*)
@@ -105,7 +117,6 @@ NO_DUPES_TEMP_ALIASES = ValidationQuery(
 
 NO_DUPES_ALIASES = ValidationQuery(
     short_name="Duplicate aliases in aliases",
-    table_name=constants.ALIASES_TABLE,
     query=f"""
         SELECT GROUP_CONCAT(alias_id_pk) AS duplicate_ids, alias_first_name, alias_email, alias_phone, alias_address_1, alias_address_2, alias_city, 
             alias_zip, alias_country, alias_middle_name, alias_last_name, alias_state, COUNT(*)
@@ -117,7 +128,6 @@ NO_DUPES_ALIASES = ValidationQuery(
 
 NO_DUPES_RAW_DATA_BLUEPAY = ValidationQuery(
     short_name="Duplicate transaction IDs in raw data",
-    table_name=constants.BLUEPAY_RAW_TABLE_NAME,
     query=f"""
         SELECT {constants.BLUEPAY_TRANS_ID_FIELD}, COUNT(*) AS count
         FROM {constants.BLUEPAY_RAW_TABLE_NAME}
@@ -127,7 +137,6 @@ NO_DUPES_RAW_DATA_BLUEPAY = ValidationQuery(
 
 NO_DUPES_RAW_DATA_CARDPOINTE = ValidationQuery(
     short_name="Duplicate transaction IDs in raw data",
-    table_name=constants.CARDPOINTE_RAW_TABLE_NAME,
     query=f"""
         SELECT {constants.CARDPOINTE_TRANS_ID_FIELD}, COUNT(*) AS count
         FROM {constants.CARDPOINTE_RAW_TABLE_NAME}
@@ -137,7 +146,6 @@ NO_DUPES_RAW_DATA_CARDPOINTE = ValidationQuery(
 
 NO_DUPES_RAW_DATA_PAYPAL = ValidationQuery(
     short_name="Duplicate transaction IDs in raw data",
-    table_name=constants.PAYPAL_RAW_TABLE_NAME,
     query=f"""
         SELECT {constants.PAYPAL_TRANS_ID_FIELD}, COUNT(*) AS count
         FROM {constants.PAYPAL_RAW_TABLE_NAME}
@@ -147,7 +155,6 @@ NO_DUPES_RAW_DATA_PAYPAL = ValidationQuery(
 
 UNACCOUNTED_BLUEPAY = ValidationQuery(
     short_name="Unaccounted Bluepay transactions",
-    table_name=constants.BLUEPAY_RAW_TABLE_NAME,
     query=f"""
         SELECT rbd.*
         FROM {constants.BLUEPAY_RAW_TABLE_NAME} as rbd
@@ -170,7 +177,6 @@ UNACCOUNTED_BLUEPAY = ValidationQuery(
 
 UNACCOUNTED_CARDPOINTE = ValidationQuery(
     short_name="Unaccounted Cardpointe transactions",
-    table_name=constants.CARDPOINTE_RAW_TABLE_NAME,
     query=f"""
         SELECT rcd.*
         FROM {constants.CARDPOINTE_RAW_TABLE_NAME} as rcd
@@ -196,7 +202,6 @@ UNACCOUNTED_CARDPOINTE = ValidationQuery(
 
 UNACCOUNTED_PAYPAL = ValidationQuery(
     short_name="Unaccounted PayPal transactions",
-    table_name=constants.PAYPAL_RAW_TABLE_NAME,
     query=f"""
         SELECT rpd.*
         FROM {constants.PAYPAL_RAW_TABLE_NAME} as rpd

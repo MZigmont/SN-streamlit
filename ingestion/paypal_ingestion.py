@@ -70,8 +70,6 @@ def ingest_data(df: pd.DataFrame, conn):
         LEFT JOIN {ALIASES_TABLE} a 
             ON rpd.contact_phone_number COLLATE NOCASE = a.alias_phone COLLATE NOCASE
             OR rpd.from_email_address COLLATE NOCASE = a.alias_email COLLATE NOCASE
-            OR (rpd.my_first_name COLLATE NOCASE = a.alias_first_name COLLATE NOCASE and
-            rpd.my_last_name COLLATE NOCASE = a.alias_last_name COLLATE NOCASE)
         LEFT JOIN {DONATIONS_TABLE} d
             ON rpd.transaction_id =  d.source_trans_id
             and d.trans_source_id_fk = 2
@@ -125,8 +123,6 @@ def ingest_data(df: pd.DataFrame, conn):
         LEFT JOIN {ALIASES_TABLE} a 
             ON rpd.contact_phone_number COLLATE NOCASE = a.alias_phone COLLATE NOCASE
             OR rpd.from_email_address COLLATE NOCASE = a.alias_email COLLATE NOCASE
-            OR (rpd.my_first_name COLLATE NOCASE = a.alias_first_name COLLATE NOCASE and
-            rpd.my_last_name COLLATE NOCASE = a.alias_last_name COLLATE NOCASE)
         LEFT JOIN {DONATIONS_TABLE} d
             ON rpd.transaction_id =  d.source_trans_id
             and d.trans_source_id_fk = 2
@@ -183,8 +179,6 @@ def ingest_data(df: pd.DataFrame, conn):
         LEFT JOIN {ALIASES_TABLE} a 
             ON temp1.contact_phone_number COLLATE NOCASE = a.alias_phone COLLATE NOCASE
             OR temp1.from_email_address COLLATE NOCASE = a.alias_email COLLATE NOCASE
-            OR (temp1.my_first_name COLLATE NOCASE = a.alias_first_name COLLATE NOCASE and
-            temp1.my_last_name COLLATE NOCASE = a.alias_last_name COLLATE NOCASE)
         LEFT JOIN {PAYPAL_RAW_TABLE_NAME} rpd -- explicitly removes 'General Currency Conversion' to avoid double counting
             on temp1.transaction_id = rpd.reference_txn_id and
             rpd.type = 'General Currency Conversion'

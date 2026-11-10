@@ -65,8 +65,6 @@ def ingest_data(df: pd.DataFrame, conn):
         LEFT JOIN {ALIASES_TABLE} a 
             ON rbd.phone COLLATE NOCASE = a.alias_phone COLLATE NOCASE -- COLLATE NOCASE is the syntax for ignoring case
             OR rbd.email COLLATE NOCASE = a.alias_email COLLATE NOCASE
-            OR (rbd.name1 COLLATE NOCASE = a.alias_first_name COLLATE NOCASE and
-            rbd.name2 COLLATE NOCASE = a.alias_last_name COLLATE NOCASE)
         LEFT JOIN {TEMP_DONATIONS_TABLE} td
             ON (rbd.id = td.source_trans_id -- first time called, this does noting.  second time around, this ignores transactions already in td
             AND td.trans_source_id_fk = 1) 

@@ -70,8 +70,6 @@ def ingest_data(df: pd.DataFrame, conn):
         LEFT JOIN {ALIASES_TABLE} a 
             ON rcd.phone_number COLLATE NOCASE = a.alias_phone COLLATE NOCASE
             OR rcd.email COLLATE NOCASE = a.alias_email COLLATE NOCASE
-            OR (rcd.my_first_name COLLATE NOCASE = a.alias_first_name COLLATE NOCASE and
-            rcd.my_last_name COLLATE NOCASE = a.alias_last_name COLLATE NOCASE)
         LEFT JOIN {TEMP_DONATIONS_TABLE} td
             ON (rcd.transaction_num = td.source_trans_id
             AND td.trans_source_id_fk = 4) 
