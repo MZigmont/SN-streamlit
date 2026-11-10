@@ -68,6 +68,8 @@ def main():
 
     ctx.render_backup_warning()
 
+    if "db_ops_enabled" not in st.session_state:
+        st.session_state["db_ops_enabled"] = True
 
     conn = ctx.get_db_connection()
     sync_clicked = ctx.render_drive_sidebar(conn, current_page="ingest_data")
@@ -75,6 +77,10 @@ def main():
         st.stop()
     if conn is None:
         st.stop()
+
+    if not st.session_state["db_ops_enabled"]:
+        st.info("Refresh the page to continue making database changes.")
+        return
 
     latest_df = udb.get_latest_transaction(conn)
     latest_df = latest_df.rename(
@@ -142,7 +148,10 @@ def main():
             st.text("How do you want to proceed?")
             if st.button("Commit the data to database?"):
                 conn.commit()
+                st.session_state["db_ops_enabled"] = False
                 st.success("Data committed to the database!")
+                st.info("Refresh the page to continue making database changes.")
+                return
 
             if st.button("Cancel"):
                 conn.rollback()
